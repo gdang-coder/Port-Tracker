@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portfolio Tracker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Portfolio Tracker</h1>
+    <button id="refreshBtn" class="btn-ghost" title="Refresh prices">&#8635; Refresh</button>
+  </header>
+
+  <main>
+    <!-- Summary cards -->
+    <section class="cards" id="summaryCards">
+      <div class="card">
+        <span class="label">Total Value</span>
+        <span class="value" id="totalValue">—</span>
+      </div>
+      <div class="card">
+        <span class="label">Total Cost</span>
+        <span class="value" id="totalCost">—</span>
+      </div>
+      <div class="card">
+        <span class="label">Total Gain / Loss</span>
+        <span class="value" id="totalGain">—</span>
+      </div>
+      <div class="card">
+        <span class="label">Return</span>
+        <span class="value" id="totalGainPct">—</span>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section class="charts" id="chartsSection" style="display:none">
+      <div class="chart-box">
+        <h2>Allocation by Symbol</h2>
+        <canvas id="allocationChart"></canvas>
+      </div>
+      <div class="chart-box">
+        <h2>Holdings by Broker</h2>
+        <canvas id="brokerChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Holdings table -->
+    <section class="table-section">
+      <div class="table-header">
+        <h2>Holdings</h2>
+        <button class="btn" id="addHoldingBtn">+ Add Holding</button>
+      </div>
+      <div id="tableWrap">
+        <table id="holdingsTable">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Broker</th>
+              <th class="num">Shares</th>
+              <th class="num">Avg Cost</th>
+              <th class="num">Current Price</th>
+              <th class="num">Market Value</th>
+              <th class="num">Gain / Loss</th>
+              <th class="num">Return</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="holdingsBody">
+            <tr id="emptyRow"><td colspan="9" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Import section -->
+    <section class="import-section">
+      <h2>Import CSV</h2>
+      <p class="hint">CSV must have columns: <code>symbol</code> (or <code>ticker</code>), <code>shares</code> (or <code>qty</code>), <code>cost</code> (or <code>cost_per_share</code> / <code>avg_cost</code>). Importing replaces all existing holdings for that broker.</p>
+      <form id="importForm" class="import-form">
+        <div class="field">
+          <label for="brokerName">Broker name</label>
+          <input id="brokerName" type="text" placeholder="e.g. Fidelity" required />
+        </div>
+        <div class="field">
+          <label for="csvFile">CSV file</label>
+          <input id="csvFile" type="file" accept=".csv,text/csv" required />
+        </div>
+        <button type="submit" class="btn">Import</button>
+        <span id="importStatus" class="status-msg"></span>
+      </form>
+    </section>
+  </main>
+
+  <!-- Add holding modal -->
+  <div id="modal" class="modal" style="display:none">
+    <div class="modal-box">
+      <h2>Add Holding</h2>
+      <form id="addForm">
+        <div class="field">
+          <label>Symbol</label>
+          <input id="mSymbol" type="text" placeholder="e.g. AAPL" required />
+        </div>
+        <div class="field">
+          <label>Broker</label>
+          <input id="mBroker" type="text" placeholder="e.g. Schwab" required />
+        </div>
+        <div class="field">
+          <label>Shares</label>
+          <input id="mShares" type="number" min="0.0001" step="any" placeholder="10" required />
+        </div>
+        <div class="field">
+          <label>Average Cost Per Share ($)</label>
+          <input id="mCost" type="number" min="0.0001" step="any" placeholder="150.00" required />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" id="cancelModal">Cancel</button>
+          <button type="submit" class="btn">Add</button>
+        </div>
+        <span id="modalStatus" class="status-msg"></span>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
