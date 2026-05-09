@@ -7,11 +7,14 @@ import prices
 app = Flask(__name__)
 db.init_db()
 
-REQUIRED_COLS = {"symbol", "shares", "cost"}
+REQUIRED_COLS = {"symbol", "shares"}
+
+# Maps header names to either "cost" (per-share) or "cost_total" (total paid)
 COL_ALIASES = {
     "ticker": "symbol",
     "qty": "shares",
     "quantity": "shares",
+    # per-share cost
     "avg cost": "cost",
     "avg_cost": "cost",
     "cost per share": "cost",
@@ -19,6 +22,14 @@ COL_ALIASES = {
     "average cost": "cost",
     "price paid": "cost",
     "purchase price": "cost",
+    "unit cost": "cost",
+    # total cost basis (will be divided by shares)
+    "cost basis": "cost_total",
+    "cost_basis": "cost_total",
+    "total cost": "cost_total",
+    "total cost basis": "cost_total",
+    "average cost basis": "cost_total",
+    "book value": "cost_total",
 }
 
 
@@ -27,29 +38,48 @@ def normalise_header(h: str) -> str:
     return COL_ALIASES.get(h, h)
 
 
+def _parse_num(s: str) -> float:
+    return float(s.strip().replace(",", "").replace("$", "").replace("(", "-").replace(")", ""))
+
+
 def parse_csv(file_bytes: bytes) -> list[dict]:
     text = file_bytes.decode("utf-8-sig").strip()
     reader = csv.DictReader(io.StringIO(text))
     headers = {normalise_header(h): h for h in (reader.fieldnames or [])}
+
     missing = REQUIRED_COLS - set(headers.keys())
     if missing:
         raise ValueError(
             f"CSV is missing required columns: {', '.join(sorted(missing))}. "
-            f"Need: symbol (or ticker), shares (or qty/quantity), cost (or avg_cost/cost_per_share)"
+            f"Need: symbol (or ticker), shares (or qty/quantity)"
         )
+    has_cost = "cost" in headers
+    has_cost_total = "cost_total" in headers
+    if not has_cost and not has_cost_total:
+        raise ValueError(
+            "CSV is missing a cost column. "
+            "Need one of: cost, avg_cost, cost_per_share, cost basis, total cost"
+        )
+
     rows = []
     for i, row in enumerate(reader, start=2):
         sym = row[headers["symbol"]].strip().upper()
         if not sym:
             continue
         try:
-            shares = float(row[headers["shares"]].replace(",", ""))
-            cost = float(row[headers["cost"]].replace(",", "").replace("$", ""))
-        except ValueError:
-            raise ValueError(f"Row {i}: shares and cost must be numbers")
-        if shares <= 0 or cost <= 0:
+            shares = _parse_num(row[headers["shares"]])
+            if has_cost:
+                cost_per_share = _parse_num(row[headers["cost"]])
+            else:
+                cost_total = _parse_num(row[headers["cost_total"]])
+                if shares == 0:
+                    raise ValueError(f"Row {i}: shares cannot be zero when computing cost per share from total")
+                cost_per_share = cost_total / shares
+        except ValueError as e:
+            raise ValueError(f"Row {i}: {e}" if "Row" not in str(e) else str(e))
+        if shares <= 0 or cost_per_share <= 0:
             raise ValueError(f"Row {i}: shares and cost must be positive")
-        rows.append({"symbol": sym, "shares": shares, "cost_per_share": cost})
+        rows.append({"symbol": sym, "shares": shares, "cost_per_share": cost_per_share})
     if not rows:
         raise ValueError("CSV has no data rows")
     return rows
