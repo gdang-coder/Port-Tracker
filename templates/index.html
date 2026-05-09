@@ -77,7 +77,7 @@
     <!-- Import section -->
     <section class="import-section">
       <h2>Import CSV</h2>
-      <p class="hint">CSV must have columns: <code>symbol</code> (or <code>ticker</code>), <code>shares</code> (or <code>qty</code>), <code>cost</code> (or <code>cost_per_share</code> / <code>avg_cost</code>). Importing replaces all existing holdings for that broker.</p>
+      <p class="hint">CSV must have columns: <code>symbol</code> (or <code>ticker</code>), <code>shares</code> (or <code>qty</code>), <code>cost</code> (or <code>cost_per_share</code> / <code>avg_cost</code>). Importing replaces all existing holdings for that broker and saves a snapshot automatically.</p>
       <form id="importForm" class="import-form">
         <div class="field">
           <label for="brokerName">Broker name</label>
@@ -90,6 +90,27 @@
         <button type="submit" class="btn">Import</button>
         <span id="importStatus" class="status-msg"></span>
       </form>
+    </section>
+
+    <!-- History section -->
+    <section class="history-section">
+      <div class="history-header">
+        <div>
+          <h2>Portfolio History</h2>
+          <p class="hint" style="margin:4px 0 0">Snapshots are saved automatically on every import. You can also save one manually.</p>
+        </div>
+        <button class="btn-ghost" id="saveSnapshotBtn">&#9632; Save Snapshot</button>
+      </div>
+
+      <!-- Timeline chart -->
+      <div id="timelineWrap" style="display:none" class="timeline-wrap">
+        <canvas id="timelineChart"></canvas>
+      </div>
+
+      <!-- Snapshot list -->
+      <div id="snapshotList" class="snapshot-list">
+        <p class="empty" id="snapshotEmpty">No snapshots yet. Import a CSV to create the first one.</p>
+      </div>
     </section>
   </main>
 

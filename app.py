@@ -55,16 +55,10 @@ def parse_csv(file_bytes: bytes) -> list[dict]:
     return rows
 
 
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/api/portfolio")
-def portfolio():
-    holdings = db.get_all_holdings()
+def enrich_holdings(holdings):
+    """Attach live prices and compute P&L fields."""
     if not holdings:
-        return jsonify({"holdings": [], "summary": {"total_value": 0, "total_cost": 0, "total_gain": 0, "total_gain_pct": 0}})
+        return [], {"total_value": 0, "total_cost": 0, "total_gain": 0, "total_gain_pct": 0}
 
     symbols = list({h["symbol"] for h in holdings})
     current_prices = prices.get_prices(symbols)
@@ -95,15 +89,25 @@ def portfolio():
     total_gain = total_value - total_cost
     total_gain_pct = (total_gain / total_cost * 100) if total_cost else 0
 
-    return jsonify({
-        "holdings": enriched,
-        "summary": {
-            "total_value": total_value,
-            "total_cost": total_cost,
-            "total_gain": total_gain,
-            "total_gain_pct": total_gain_pct,
-        },
-    })
+    summary = {
+        "total_value": total_value,
+        "total_cost": total_cost,
+        "total_gain": total_gain,
+        "total_gain_pct": total_gain_pct,
+    }
+    return enriched, summary
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/portfolio")
+def portfolio():
+    holdings = db.get_all_holdings()
+    enriched, summary = enrich_holdings(holdings)
+    return jsonify({"holdings": enriched, "summary": summary})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -120,6 +124,12 @@ def upload():
         return jsonify({"error": str(e)}), 400
 
     db.replace_broker_holdings(broker, rows)
+
+    # Snapshot the full portfolio after update
+    all_holdings = db.get_all_holdings()
+    enriched, _ = enrich_holdings(all_holdings)
+    db.save_snapshot(f"{broker} import · {len(rows)} holdings", enriched)
+
     return jsonify({"imported": len(rows), "broker": broker})
 
 
@@ -142,6 +152,39 @@ def add_holding():
 @app.route("/api/holding/<int:holding_id>", methods=["DELETE"])
 def delete_holding(holding_id):
     db.delete_holding(holding_id)
+    return jsonify({"ok": True})
+
+
+# --- Snapshot endpoints ---
+
+@app.route("/api/snapshots", methods=["GET"])
+def list_snapshots():
+    return jsonify(db.get_snapshots())
+
+
+@app.route("/api/snapshots", methods=["POST"])
+def create_snapshot():
+    label = (request.get_json() or {}).get("label", "Manual snapshot")
+    label = label.strip() or "Manual snapshot"
+    all_holdings = db.get_all_holdings()
+    if not all_holdings:
+        return jsonify({"error": "No holdings to snapshot"}), 400
+    enriched, _ = enrich_holdings(all_holdings)
+    db.save_snapshot(label, enriched)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/snapshots/<int:snapshot_id>", methods=["GET"])
+def get_snapshot(snapshot_id):
+    snap = db.get_snapshot(snapshot_id)
+    if not snap:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(snap)
+
+
+@app.route("/api/snapshots/<int:snapshot_id>", methods=["DELETE"])
+def delete_snapshot(snapshot_id):
+    db.delete_snapshot(snapshot_id)
     return jsonify({"ok": True})
 
 

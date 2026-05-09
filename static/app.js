@@ -13,6 +13,9 @@ const PALETTE = [
 
 let allocationChart = null;
 let brokerChart = null;
+let timelineChart = null;
+
+// ── Portfolio ──────────────────────────────────────────────────────────────
 
 async function loadPortfolio() {
   const res = await fetch('/api/portfolio');
@@ -57,7 +60,7 @@ function renderTable(holdings) {
 
   tbody.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm(`Remove this holding?`)) return;
+      if (!confirm('Remove this holding?')) return;
       await fetch(`/api/holding/${btn.dataset.id}`, { method: 'DELETE' });
       loadPortfolio();
     });
@@ -69,7 +72,6 @@ function renderCharts(holdings) {
   if (!holdings.length) { section.style.display = 'none'; return; }
   section.style.display = 'grid';
 
-  // Allocation by symbol (by market value, fallback to cost basis)
   const bySymbol = {};
   for (const h of holdings) {
     const val = h.market_value ?? h.cost_basis;
@@ -93,7 +95,6 @@ function renderCharts(holdings) {
     },
   });
 
-  // By broker (bar)
   const byBroker = {};
   for (const h of holdings) {
     const val = h.market_value ?? h.cost_basis;
@@ -107,12 +108,7 @@ function renderCharts(holdings) {
     type: 'bar',
     data: {
       labels: brkLabels,
-      datasets: [{
-        label: 'Value',
-        data: brkValues,
-        backgroundColor: PALETTE.slice(0, brkLabels.length),
-        borderRadius: 6,
-      }],
+      datasets: [{ label: 'Value', data: brkValues, backgroundColor: PALETTE.slice(0, brkLabels.length), borderRadius: 6 }],
     },
     options: {
       plugins: {
@@ -127,8 +123,185 @@ function renderCharts(holdings) {
   });
 }
 
+// ── History / Snapshots ────────────────────────────────────────────────────
+
+async function loadSnapshots() {
+  const res = await fetch('/api/snapshots');
+  const snapshots = await res.json();
+  renderTimeline(snapshots);
+  renderSnapshotList(snapshots);
+}
+
+function renderTimeline(snapshots) {
+  const wrap = document.getElementById('timelineWrap');
+  // Only show if we have at least 2 snapshots with price data
+  const withValue = snapshots.filter(s => s.total_value != null).reverse();
+  if (withValue.length < 2) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+
+  const labels = withValue.map(s => fmtDateShort(s.taken_at));
+  const costData = withValue.map(s => s.total_cost);
+  const valueData = withValue.map(s => s.total_value);
+
+  if (timelineChart) timelineChart.destroy();
+  timelineChart = new Chart(document.getElementById('timelineChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Market Value',
+          data: valueData,
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99,102,241,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+        },
+        {
+          label: 'Cost Basis',
+          data: costData,
+          borderColor: '#8892a4',
+          borderDash: [5, 4],
+          backgroundColor: 'transparent',
+          tension: 0.3,
+          pointRadius: 3,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 12 } } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: '#8892a4', maxRotation: 30 }, grid: { color: '#2a2d3a' } },
+        y: { ticks: { color: '#8892a4', callback: v => '$' + (v >= 1000 ? (v/1000).toFixed(0)+'k' : v) }, grid: { color: '#2a2d3a' } },
+      },
+    },
+  });
+}
+
+function renderSnapshotList(snapshots) {
+  const list = document.getElementById('snapshotList');
+  const empty = document.getElementById('snapshotEmpty');
+
+  if (!snapshots.length) {
+    empty.style.display = 'block';
+    // Remove any existing snapshot rows
+    list.querySelectorAll('.snapshot-item').forEach(el => el.remove());
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Rebuild list
+  list.querySelectorAll('.snapshot-item').forEach(el => el.remove());
+
+  for (const snap of snapshots) {
+    const item = document.createElement('div');
+    item.className = 'snapshot-item';
+    item.dataset.id = snap.id;
+
+    const gain = snap.total_value != null ? snap.total_value - snap.total_cost : null;
+    const gainPct = gain != null && snap.total_cost ? gain / snap.total_cost * 100 : null;
+
+    item.innerHTML = `
+      <div class="snap-row" data-id="${snap.id}">
+        <div class="snap-meta">
+          <span class="snap-label">${escHtml(snap.label)}</span>
+          <span class="snap-date">${fmtDate(snap.taken_at)}</span>
+        </div>
+        <div class="snap-stats">
+          <span class="snap-stat"><span class="snap-stat-label">Holdings</span> ${snap.num_holdings}</span>
+          <span class="snap-stat"><span class="snap-stat-label">Cost</span> ${fmt(snap.total_cost)}</span>
+          <span class="snap-stat"><span class="snap-stat-label">Value</span> ${fmt(snap.total_value)}</span>
+          <span class="snap-stat ${gainClass(gain)}"><span class="snap-stat-label">Gain</span> ${gain != null ? fmt(gain) + ' (' + fmtPct(gainPct) + ')' : '—'}</span>
+        </div>
+        <div class="snap-actions">
+          <button class="snap-expand btn-ghost" data-id="${snap.id}">View ▾</button>
+          <button class="snap-del del-btn" data-id="${snap.id}" title="Delete snapshot">✕</button>
+        </div>
+      </div>
+      <div class="snap-detail" id="snapDetail${snap.id}" style="display:none"></div>
+    `;
+
+    list.appendChild(item);
+
+    item.querySelector('.snap-expand').addEventListener('click', () => toggleSnapshotDetail(snap.id));
+    item.querySelector('.snap-del').addEventListener('click', async () => {
+      if (!confirm('Delete this snapshot?')) return;
+      await fetch(`/api/snapshots/${snap.id}`, { method: 'DELETE' });
+      loadSnapshots();
+    });
+  }
+}
+
+async function toggleSnapshotDetail(id) {
+  const detail = document.getElementById(`snapDetail${id}`);
+  const btn = document.querySelector(`.snap-expand[data-id="${id}"]`);
+
+  if (detail.style.display !== 'none') {
+    detail.style.display = 'none';
+    btn.textContent = 'View ▾';
+    return;
+  }
+
+  btn.textContent = 'Loading…';
+  const res = await fetch(`/api/snapshots/${id}`);
+  const snap = await res.json();
+
+  detail.innerHTML = buildSnapshotTable(snap.holdings);
+  detail.style.display = 'block';
+  btn.textContent = 'Hide ▴';
+}
+
+function buildSnapshotTable(holdings) {
+  if (!holdings.length) return '<p class="empty" style="padding:16px">No holdings in this snapshot.</p>';
+  return `
+    <div style="overflow-x:auto">
+      <table class="snap-table">
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Broker</th>
+            <th class="num">Shares</th><th class="num">Avg Cost</th>
+            <th class="num">Price at Snapshot</th><th class="num">Value</th>
+            <th class="num">Gain / Loss</th><th class="num">Return</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${holdings.map(h => `
+            <tr>
+              <td class="symbol">${h.symbol}</td>
+              <td><span class="broker-badge">${escHtml(h.broker)}</span></td>
+              <td class="num">${h.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+              <td class="num">${fmt(h.cost_per_share)}</td>
+              <td class="num ${h.current_price == null ? 'muted-val' : ''}">${fmt(h.current_price)}</td>
+              <td class="num">${fmt(h.market_value)}</td>
+              <td class="num ${gainClass(h.gain)}">${fmt(h.gain)}</td>
+              <td class="num ${gainClass(h.gain_pct)}">${fmtPct(h.gain_pct)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+
 function escHtml(s) {
-  return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtDateShort(iso) {
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function setStatus(el, msg, type) {
@@ -137,7 +310,8 @@ function setStatus(el, msg, type) {
   if (type === 'ok') setTimeout(() => { el.textContent = ''; el.className = 'status-msg'; }, 3000);
 }
 
-// Import form
+// ── Event wiring ───────────────────────────────────────────────────────────
+
 document.getElementById('importForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const status = document.getElementById('importStatus');
@@ -159,10 +333,26 @@ document.getElementById('importForm').addEventListener('submit', async (e) => {
     setStatus(status, `Imported ${json.imported} holdings for ${json.broker}`, 'ok');
     e.target.reset();
     loadPortfolio();
+    loadSnapshots();
   }
 });
 
-// Add holding modal
+document.getElementById('saveSnapshotBtn').addEventListener('click', async () => {
+  const label = prompt('Snapshot label (optional):', 'Manual snapshot');
+  if (label === null) return; // cancelled
+  const res = await fetch('/api/snapshots', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label.trim() || 'Manual snapshot' }),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    alert(json.error);
+  } else {
+    loadSnapshots();
+  }
+});
+
 document.getElementById('addHoldingBtn').addEventListener('click', () => {
   document.getElementById('modal').style.display = 'flex';
 });
@@ -198,8 +388,8 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
   }
 });
 
-// Refresh button
 document.getElementById('refreshBtn').addEventListener('click', loadPortfolio);
 
 // Initial load
 loadPortfolio();
+loadSnapshots();

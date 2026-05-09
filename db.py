@@ -1,4 +1,5 @@
 import sqlite3
+import json
 import os
 
 DB_PATH = os.environ.get("DB_PATH", "portfolio.db")
@@ -22,6 +23,17 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                taken_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                label TEXT NOT NULL,
+                num_holdings INTEGER NOT NULL,
+                total_cost REAL NOT NULL,
+                total_value REAL,
+                holdings_json TEXT NOT NULL
+            )
+        """)
 
 
 def get_all_holdings():
@@ -43,7 +55,6 @@ def upsert_holding(symbol, shares, cost_per_share, broker):
             old_shares = existing["shares"]
             old_cost = existing["cost_per_share"]
             new_shares = old_shares + shares
-            # weighted average cost
             new_cost = (old_shares * old_cost + shares * cost_per_share) / new_shares
             conn.execute(
                 "UPDATE holdings SET shares=?, cost_per_share=? WHERE id=?",
@@ -71,3 +82,44 @@ def replace_broker_holdings(broker, rows):
             "INSERT INTO holdings (symbol, shares, cost_per_share, broker) VALUES (?,?,?,?)",
             [(r["symbol"].upper(), r["shares"], r["cost_per_share"], broker) for r in rows],
         )
+
+
+# --- Snapshots ---
+
+def save_snapshot(label, enriched_holdings):
+    """Persist a snapshot of the portfolio. enriched_holdings includes prices."""
+    total_cost = sum(h["cost_basis"] for h in enriched_holdings)
+    valued = [h for h in enriched_holdings if h.get("market_value") is not None]
+    total_value = sum(h["market_value"] for h in valued) if valued else None
+
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO snapshots (label, num_holdings, total_cost, total_value, holdings_json)
+               VALUES (?,?,?,?,?)""",
+            (label, len(enriched_holdings), total_cost, total_value, json.dumps(enriched_holdings)),
+        )
+
+
+def get_snapshots():
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, taken_at, label, num_holdings, total_cost, total_value FROM snapshots ORDER BY taken_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_snapshot(snapshot_id):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM snapshots WHERE id=?", (snapshot_id,)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["holdings"] = json.loads(d.pop("holdings_json"))
+    return d
+
+
+def delete_snapshot(snapshot_id):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM snapshots WHERE id=?", (snapshot_id,))
