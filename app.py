@@ -1,5 +1,6 @@
 import io
 import re
+import math
 import json
 import threading
 import pandas as pd
@@ -53,7 +54,8 @@ def _norm(s) -> str:
 
 
 def _parse_num(s) -> float:
-    """Parse a numeric cell, tolerating $, commas, %, parens for negatives."""
+    """Parse a numeric cell, tolerating $, commas, %, parens for negatives.
+    Returns 0.0 for anything unparseable, blank, or non-finite (NaN/Inf)."""
     if s is None:
         return 0.0
     cleaned = (
@@ -61,11 +63,17 @@ def _parse_num(s) -> float:
               .replace(',', '').replace('$', '')
               .replace('%', '').replace(' ', '')
     )
-    if not cleaned or cleaned in {'-', '--', 'N/A', 'NA'}:
+    if not cleaned or cleaned.upper() in {'-', '--', 'N/A', 'NA', 'NAN', 'NONE', 'NULL'}:
         return 0.0
     if cleaned.startswith('(') and cleaned.endswith(')'):
         cleaned = '-' + cleaned[1:-1]
-    return float(cleaned)
+    try:
+        v = float(cleaned)
+    except (ValueError, TypeError):
+        return 0.0
+    if not math.isfinite(v):
+        return 0.0
+    return v
 
 
 def _find_header_row_index(text: str) -> int:
@@ -150,27 +158,26 @@ def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
         )
 
     rows = []
+    skipped = 0
     for _, r in df.iterrows():
-        sym = str(r.get(sym_col, '') or '').strip().upper()
+        raw_sym = r.get(sym_col)
+        sym = str(raw_sym if raw_sym is not None else '').strip().upper()
         if not _SYMBOL_RE.match(sym):
-            continue  # skip cash, totals, blank rows, etc.
-        try:
-            shares = _parse_num(r.get(shr_col))
-            cost_raw = _parse_num(r.get(cost_col))
-        except (ValueError, TypeError):
+            skipped += 1
+            continue  # skip cash, totals, blank rows, non-ticker symbols
+        shares = _parse_num(r.get(shr_col))
+        cost_raw = _parse_num(r.get(cost_col))
+        if not (math.isfinite(shares) and shares > 0):
             continue
-        if shares <= 0 or cost_raw <= 0:
+        if not (math.isfinite(cost_raw) and cost_raw > 0):
             continue
-        try:
-            cost_per_share = cost_raw / shares if cost_is_total else cost_raw
-        except ZeroDivisionError:
+        cost_per_share = (cost_raw / shares) if cost_is_total else cost_raw
+        if not math.isfinite(cost_per_share) or cost_per_share <= 0 or cost_per_share > 1e7:
             continue
-        if cost_per_share <= 0 or cost_per_share > 1e7:
-            continue  # sanity check
         rows.append({
             'symbol': sym,
-            'shares': shares,
-            'cost_per_share': cost_per_share,
+            'shares': float(shares),
+            'cost_per_share': float(cost_per_share),
         })
 
     if not rows:

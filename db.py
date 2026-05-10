@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import math
 import os
 
 DB_PATH = os.environ.get("DB_PATH", "portfolio.db")
@@ -83,12 +84,27 @@ def delete_holding(holding_id):
 
 
 def replace_broker_holdings(broker, rows):
+    clean = []
+    for r in rows:
+        sym = (r.get("symbol") or "").strip().upper()
+        try:
+            shares = float(r.get("shares"))
+            cost = float(r.get("cost_per_share"))
+        except (TypeError, ValueError):
+            continue
+        if not sym or not math.isfinite(shares) or not math.isfinite(cost):
+            continue
+        if shares <= 0 or cost <= 0:
+            continue
+        clean.append((sym, shares, cost, broker))
+
     with get_conn() as conn:
         conn.execute("DELETE FROM holdings WHERE broker=?", (broker,))
-        conn.executemany(
-            "INSERT INTO holdings (symbol, shares, cost_per_share, broker) VALUES (?,?,?,?)",
-            [(r["symbol"].upper(), r["shares"], r["cost_per_share"], broker) for r in rows],
-        )
+        if clean:
+            conn.executemany(
+                "INSERT INTO holdings (symbol, shares, cost_per_share, broker) VALUES (?,?,?,?)",
+                clean,
+            )
 
 
 # --- Snapshots ---

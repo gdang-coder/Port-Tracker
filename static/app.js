@@ -137,11 +137,19 @@ function renderColumnPicker() {
   const container = document.getElementById('columnPicker');
 
   const headerCells = _importColumns.map(col => {
-    const role = _colRoles[col] || null;
-    const badge = role
-      ? `<span class="role-badge role-${role}">${ROLE_LABEL[role]}</span>`
-      : `<span class="role-badge role-none">unassigned</span>`;
-    return `<th><button class="col-header-btn${role ? ' assigned-' + role : ''}" data-col="${escHtml(col)}">${escHtml(col)}<br>${badge}</button></th>`;
+    const role = _colRoles[col] || '';
+    const opts = [
+      `<option value="">— ignore —</option>`,
+      `<option value="symbol"${role==='symbol'?' selected':''}>Symbol</option>`,
+      `<option value="shares"${role==='shares'?' selected':''}>Shares</option>`,
+      `<option value="cost"${role==='cost'?' selected':''}>Cost</option>`,
+    ].join('');
+    return `<th class="${role ? 'th-' + role : ''}">
+      <div class="col-head">
+        <div class="col-name" title="${escHtml(col)}">${escHtml(col)}</div>
+        <select class="col-role-select role-${role || 'none'}" data-col="${escHtml(col)}">${opts}</select>
+      </div>
+    </th>`;
   }).join('');
 
   const dataRows = _importRows.map(row =>
@@ -160,14 +168,12 @@ function renderColumnPicker() {
     </table>
   `;
 
-  container.querySelectorAll('.col-header-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const col = btn.dataset.col;
-      const cur = _colRoles[col] || null;
-      const idx = ROLE_CYCLE.indexOf(cur);
-      const next = ROLE_CYCLE[(idx + 1) % ROLE_CYCLE.length];
+  container.querySelectorAll('.col-role-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const col = sel.dataset.col;
+      const next = sel.value || null;
 
-      // Unassign any other column that had this same role
+      // If assigning a role, unassign any other column that had it
       if (next) {
         for (const c of Object.keys(_colRoles)) {
           if (_colRoles[c] === next && c !== col) _colRoles[c] = null;
