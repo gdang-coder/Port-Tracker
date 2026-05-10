@@ -235,13 +235,20 @@ function renderCharts(holdings) {
   if (!holdings.length) { section.style.display = 'none'; return; }
   section.style.display = 'grid';
 
-  const bySymbol = {};
-  for (const h of holdings) {
-    const val = h.market_value ?? h.cost_basis;
-    bySymbol[h.symbol] = (bySymbol[h.symbol] || 0) + val;
-  }
-  const symLabels = Object.keys(bySymbol);
-  const symValues = symLabels.map(s => bySymbol[s]);
+  // Aggregate per-symbol using the same combined-view logic so sort keys exist
+  const aggRows = aggregateBySymbol(holdings);
+  // Sort to match the current table sort; fall back to market_value desc if key
+  // doesn't apply (e.g. broker/account don't exist in aggregated rows)
+  const CHART_SORT_KEYS = new Set([
+    'symbol','shares','cost_per_share','current_price',
+    'market_value','gain','gain_pct','dividend_yield',
+  ]);
+  const chartSortKey = CHART_SORT_KEYS.has(_sort.key) ? _sort.key : 'market_value';
+  const sorted = sortRows(aggRows, chartSortKey, _sort.dir);
+
+  const symLabels = sorted.map(r => r.symbol);
+  const symValues = sorted.map(r => r.market_value ?? r.cost_total);
+  const totalVal = symValues.reduce((a, b) => a + b, 0);
 
   if (allocationChart) allocationChart.destroy();
   allocationChart = new Chart(document.getElementById('allocationChart'), {
@@ -253,7 +260,14 @@ function renderCharts(holdings) {
     options: {
       plugins: {
         legend: { position: 'right', labels: { color: '#e2e8f0', boxWidth: 12, padding: 14, font: { size: 12 } } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${fmt(ctx.parsed)}` } },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const pct = totalVal > 0 ? (ctx.parsed / totalVal * 100).toFixed(1) : '0.0';
+              return ` ${ctx.label}: ${fmt(ctx.parsed)} (${pct}%)`;
+            },
+          },
+        },
       },
     },
   });
