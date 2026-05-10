@@ -16,6 +16,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="portfolio">Portfolio</button>
     <button class="tab-btn" data-tab="performance">Performance</button>
+    <button class="tab-btn" data-tab="transactions">Transactions</button>
   </nav>
 
   <main>
@@ -202,12 +203,14 @@
           <span class="card-sub" id="perfEndDate"></span>
         </div>
         <div class="card">
-          <span class="label">Change</span>
+          <span class="label">Period P&amp;L</span>
           <span class="value" id="perfChange">—</span>
+          <span class="card-sub" id="perfContrib"></span>
         </div>
         <div class="card">
-          <span class="label">Return</span>
+          <span class="label">Period Return</span>
           <span class="value" id="perfReturn">—</span>
+          <span class="card-sub">on starting value</span>
         </div>
       </section>
 
@@ -233,6 +236,121 @@
         </div>
       </section>
     </div><!-- /#tabPerformance -->
+
+    <!-- ============ TRANSACTIONS TAB ============ -->
+    <div id="tabTransactions" class="tab-pane">
+
+      <!-- Summary cards -->
+      <section class="cards" id="txCards">
+        <div class="card">
+          <span class="label">Dividends</span>
+          <span class="value gain-pos" id="txDividends">—</span>
+        </div>
+        <div class="card">
+          <span class="label">Buys</span>
+          <span class="value" id="txBuys">—</span>
+        </div>
+        <div class="card">
+          <span class="label">Sells</span>
+          <span class="value" id="txSells">—</span>
+        </div>
+        <div class="card">
+          <span class="label">Total Transactions</span>
+          <span class="value" id="txCount">—</span>
+        </div>
+      </section>
+
+      <!-- Date range + filters -->
+      <section class="perf-controls">
+        <div class="perf-range">
+          <div class="field">
+            <label for="txStart">Start date</label>
+            <input id="txStart" type="date" />
+          </div>
+          <div class="field">
+            <label for="txEnd">End date</label>
+            <input id="txEnd" type="date" />
+          </div>
+          <div class="perf-presets" id="txPresets">
+            <button class="btn-ghost btn-sm" data-preset="1m">1M</button>
+            <button class="btn-ghost btn-sm" data-preset="3m">3M</button>
+            <button class="btn-ghost btn-sm" data-preset="6m">6M</button>
+            <button class="btn-ghost btn-sm" data-preset="ytd">YTD</button>
+            <button class="btn-ghost btn-sm" data-preset="1y">1Y</button>
+            <button class="btn-ghost btn-sm" data-preset="all">All</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transactions table -->
+      <section class="table-section">
+        <div class="table-header">
+          <h2>Transactions</h2>
+        </div>
+        <div id="txTableWrap">
+          <table id="txTable">
+            <thead id="txHead"></thead>
+            <tbody id="txBody">
+              <tr><td class="empty" colspan="9">No transactions yet. Import a CSV below.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Import section -->
+      <section class="import-section">
+        <div class="import-top-bar">
+          <h2>Import Transactions CSV</h2>
+        </div>
+
+        <div id="txImportStep1">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+            <p class="hint" style="margin:0">Upload a transaction history CSV from your broker. The importer will auto-detect Date, Action, Symbol, Shares, and Amount columns.</p>
+          </div>
+          <div class="import-form">
+            <div class="field">
+              <label for="txBrokerName">Broker name</label>
+              <input id="txBrokerName" type="text" placeholder="e.g. Fidelity" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="txAccountName">Account <span style="color:var(--muted);font-weight:400;font-size:11px">(optional)</span></label>
+              <input id="txAccountName" type="text" placeholder="e.g. IRA, Taxable" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="txCsvFile">CSV file</label>
+              <input id="txCsvFile" type="file" accept=".csv,text/csv" />
+            </div>
+            <button class="btn" id="txPreviewBtn">Preview columns</button>
+            <span id="txPreviewStatus" class="status-msg"></span>
+          </div>
+        </div>
+
+        <div id="txImportStep2" style="display:none">
+          <div class="mapping-header">
+            <span id="txMappingTitle" class="mapping-title"></span>
+            <button class="btn-ghost btn-sm" id="txBackBtn">&#8592; Change file</button>
+          </div>
+          <p class="hint" style="margin:0 0 8px">
+            Assign column roles. <strong>Date</strong> is required.
+            <strong>Action</strong> (or Description) is used to classify transactions as
+            <em>buy / sell / dividend / fee / etc.</em>
+          </p>
+          <div id="txColumnPicker" style="overflow-x:auto;border:1px solid var(--border);border-radius:6px"></div>
+          <div class="mapping-footer">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <label class="check-label">
+                <input type="checkbox" id="txReplace" />
+                Replace existing transactions for this broker &amp; account
+              </label>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center">
+              <button class="btn" id="txConfirmBtn" disabled>Import</button>
+              <span id="txConfirmStatus" class="status-msg"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div><!-- /#tabTransactions -->
   </main>
 
   <!-- Add holding modal -->

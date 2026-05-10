@@ -55,6 +55,24 @@ def init_db():
         if 'account_col' not in prof_cols:
             conn.execute("ALTER TABLE broker_profiles ADD COLUMN account_col TEXT NOT NULL DEFAULT ''")
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_date TEXT NOT NULL,
+                symbol TEXT DEFAULT '',
+                action TEXT NOT NULL DEFAULT 'other',
+                raw_action TEXT DEFAULT '',
+                shares REAL,
+                price REAL,
+                amount REAL,
+                fees REAL DEFAULT 0,
+                broker TEXT NOT NULL DEFAULT '',
+                account TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
 
 def get_all_holdings():
     with get_conn() as conn:
@@ -244,3 +262,58 @@ def save_broker_profile(broker, symbol_col, shares_col, cost_col, cost_is_total,
 def delete_broker_profile(broker):
     with get_conn() as conn:
         conn.execute("DELETE FROM broker_profiles WHERE broker=?", (broker,))
+
+
+# ── Transactions ─────────────────────────────────────────────────────────────
+
+def get_transactions(start_date=None, end_date=None, broker=None):
+    where, params = [], []
+    if start_date:
+        where.append("trade_date >= ?"); params.append(start_date)
+    if end_date:
+        where.append("trade_date <= ?"); params.append(end_date)
+    if broker:
+        where.append("broker = ?"); params.append(broker)
+    sql = "SELECT * FROM transactions"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY trade_date DESC, id DESC"
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_transactions(rows):
+    """Insert a list of transaction dicts. Returns count inserted."""
+    cols = ('trade_date', 'symbol', 'action', 'raw_action',
+            'shares', 'price', 'amount', 'fees', 'broker', 'account', 'description')
+    records = [tuple(r.get(c) for c in cols) for r in rows]
+    sql = f"INSERT INTO transactions ({','.join(cols)}) VALUES ({','.join('?'*len(cols))})"
+    with get_conn() as conn:
+        conn.executemany(sql, records)
+    return len(records)
+
+
+def delete_transaction(tx_id):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM transactions WHERE id=?", (tx_id,))
+
+
+def delete_transactions_by_broker_account(broker, account=None):
+    with get_conn() as conn:
+        if account is not None:
+            conn.execute("DELETE FROM transactions WHERE broker=? AND account=?", (broker, account))
+        else:
+            conn.execute("DELETE FROM transactions WHERE broker=?", (broker,))
+
+
+def get_transaction_summary(start_date=None, end_date=None):
+    """Aggregate totals by action type for the given date range."""
+    txs = get_transactions(start_date=start_date, end_date=end_date)
+    totals = {'dividend': 0.0, 'buy': 0.0, 'sell': 0.0, 'reinvest': 0.0, 'fee': 0.0, 'other': 0.0}
+    for t in txs:
+        amt = t.get('amount') or 0.0
+        action = t.get('action', 'other')
+        if action in totals:
+            totals[action] += abs(amt)
+    return totals

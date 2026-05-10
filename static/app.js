@@ -685,41 +685,57 @@ function initPerfRangeIfEmpty() {
 
 function renderPerformance() {
   const inRange = filterSnapshotsByRange(_allSnapshots);
-  // Snapshots come back DESC (newest first); for performance we want ASC
+  // Snapshots come back DESC (newest first); for period calc we want ASC
   const valued = inRange.filter(s => s.total_value != null).slice().reverse();
 
   const noData = document.getElementById('perfNoData');
   const wrap = document.getElementById('timelineWrap');
 
-  if (!valued.length) {
-    document.getElementById('perfStartValue').textContent = '—';
-    document.getElementById('perfEndValue').textContent = '—';
-    document.getElementById('perfChange').textContent = '—';
-    document.getElementById('perfChange').className = 'value';
-    document.getElementById('perfReturn').textContent = '—';
-    document.getElementById('perfReturn').className = 'value';
+  const clear = () => {
+    ['perfStartValue','perfEndValue','perfChange','perfReturn'].forEach(id => {
+      const el = document.getElementById(id);
+      el.textContent = '—';
+      el.className = 'value';
+    });
     document.getElementById('perfStartDate').textContent = '';
     document.getElementById('perfEndDate').textContent = '';
+    document.getElementById('perfContrib').textContent = '';
     wrap.style.display = 'none';
     noData.style.display = 'block';
     if (timelineChart) { timelineChart.destroy(); timelineChart = null; }
-    return;
-  }
+  };
+
+  if (!valued.length) { clear(); return; }
   noData.style.display = 'none';
 
   const first = valued[0];
   const last = valued[valued.length - 1];
-  const change = last.total_value - first.total_value;
-  const ret = first.total_value ? change / first.total_value * 100 : null;
+
+  // Contribution-aware return:
+  // Period P&L = change in unrealized gain, excluding money added/removed.
+  // This prevents imports that add new positions from looking like returns.
+  const startGain = first.total_value - first.total_cost;
+  const endGain   = last.total_value  - last.total_cost;
+  const periodPL  = endGain - startGain;
+  const contrib   = last.total_cost - first.total_cost;  // net new cost basis added
+  const ret       = first.total_value ? periodPL / first.total_value * 100 : null;
 
   document.getElementById('perfStartValue').textContent = fmt(first.total_value);
-  document.getElementById('perfEndValue').textContent = fmt(last.total_value);
-  document.getElementById('perfStartDate').textContent = fmtDate(first.taken_at);
-  document.getElementById('perfEndDate').textContent = fmtDate(last.taken_at);
+  document.getElementById('perfEndValue').textContent   = fmt(last.total_value);
+  document.getElementById('perfStartDate').textContent  = fmtDate(first.taken_at);
+  document.getElementById('perfEndDate').textContent    = fmtDate(last.taken_at);
 
   const changeEl = document.getElementById('perfChange');
-  changeEl.textContent = (change >= 0 ? '+' : '-') + fmt(Math.abs(change));
-  changeEl.className = 'value ' + gainClass(change);
+  changeEl.textContent = (periodPL >= 0 ? '+' : '') + fmt(periodPL);
+  changeEl.className = 'value ' + gainClass(periodPL);
+
+  // Show contribution note if cost basis changed meaningfully
+  const contribEl = document.getElementById('perfContrib');
+  if (Math.abs(contrib) > 0.01) {
+    contribEl.textContent = `${contrib >= 0 ? '+' : ''}${fmt(contrib)} net contributions`;
+  } else {
+    contribEl.textContent = 'no contributions in period';
+  }
 
   const retEl = document.getElementById('perfReturn');
   retEl.textContent = fmtPct(ret);
@@ -1060,8 +1076,267 @@ document.querySelectorAll('.perf-presets .btn-ghost').forEach(btn => {
   });
 });
 
+// ── Transactions ──────────────────────────────────────────────────────────
+
+const TX_ROLES = ['date','action','symbol','shares','price','amount','fees','description','account'];
+const TX_ROLE_LABEL = {
+  date: 'Date', action: 'Action', symbol: 'Symbol', shares: 'Shares',
+  price: 'Price', amount: 'Amount', fees: 'Fees', description: 'Description', account: 'Account',
+};
+const TX_ROLE_COLOR = {
+  date: '#a5b4fc', action: '#86efac', symbol: '#fcd34d',
+  amount: '#f9a8d4', shares: '#67e8f9', price: '#fdba74',
+  fees: '#d1d5db', description: '#c4b5fd', account: '#a7f3d0',
+};
+
+let _txColRoles = {};
+let _txColumns = [];
+let _txRows = [];
+let _txFile = null;
+let _txFileName = '';
+let _txBroker = '';
+let _txAccount = '';
+let _txRange = { start: null, end: null };
+let _allTransactions = [];
+
+async function loadTransactions() {
+  const params = new URLSearchParams();
+  if (_txRange.start) params.set('start', _txRange.start);
+  if (_txRange.end) params.set('end', _txRange.end);
+  const res = await fetch('/api/transactions?' + params);
+  _allTransactions = await res.json();
+  renderTxSummary();
+  renderTxTable(_allTransactions);
+}
+
+function renderTxSummary() {
+  const txs = _allTransactions;
+  const totals = { dividend: 0, buy: 0, sell: 0 };
+  for (const t of txs) {
+    const amt = Math.abs(t.amount || 0);
+    if (t.action === 'dividend' || t.action === 'interest') totals.dividend += amt;
+    else if (t.action === 'buy' || t.action === 'reinvest') totals.buy += amt;
+    else if (t.action === 'sell') totals.sell += amt;
+  }
+  document.getElementById('txDividends').textContent = fmt(totals.dividend);
+  document.getElementById('txBuys').textContent = fmt(totals.buy);
+  document.getElementById('txSells').textContent = fmt(totals.sell);
+  document.getElementById('txCount').textContent = txs.length.toLocaleString();
+}
+
+const ACTION_BADGE = {
+  buy: '#86efac', sell: '#f9a8d4', dividend: '#fcd34d', reinvest: '#67e8f9',
+  interest: '#fcd34d', fee: '#d1d5db', transfer: '#a5b4fc', deposit: '#86efac',
+  withdrawal: '#f9a8d4', other: '#8892a4',
+};
+
+function renderTxTable(txs) {
+  const head = document.getElementById('txHead');
+  const tbody = document.getElementById('txBody');
+  head.innerHTML = `
+    <tr>
+      <th>Date</th><th>Broker</th><th>Account</th><th>Symbol</th>
+      <th>Action</th><th class="num">Shares</th><th class="num">Price</th>
+      <th class="num">Amount</th><th class="num">Fees</th><th></th>
+    </tr>`;
+  if (!txs.length) {
+    tbody.innerHTML = '<tr><td class="empty" colspan="10">No transactions in this range.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = txs.map(t => {
+    const color = ACTION_BADGE[t.action] || '#8892a4';
+    const amtClass = t.amount == null ? '' : t.amount >= 0 ? 'gain-pos' : 'gain-neg';
+    return `<tr>
+      <td style="white-space:nowrap">${t.trade_date}</td>
+      <td><span class="broker-badge">${escHtml(t.broker)}</span></td>
+      <td>${t.account ? escHtml(t.account) : '<span class="muted-val">—</span>'}</td>
+      <td class="symbol">${t.symbol || '<span class="muted-val">—</span>'}</td>
+      <td><span class="action-badge" style="background:${color}20;color:${color};border-color:${color}40">${escHtml(t.action)}</span></td>
+      <td class="num">${t.shares != null ? t.shares.toLocaleString('en-US',{maximumFractionDigits:4}) : '—'}</td>
+      <td class="num">${t.price != null ? fmt(t.price) : '—'}</td>
+      <td class="num ${amtClass}">${t.amount != null ? fmt(t.amount) : '—'}</td>
+      <td class="num muted-val">${t.fees ? fmt(t.fees) : '—'}</td>
+      <td><button class="del-btn tx-del-btn" data-id="${t.id}" title="Delete">✕</button></td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.tx-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this transaction?')) return;
+      await fetch(`/api/transactions/${btn.dataset.id}`, { method: 'DELETE' });
+      loadTransactions();
+    });
+  });
+}
+
+function applyTxPreset(preset, allTx) {
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  let startStr;
+  if (preset === 'all') {
+    const dates = allTx.map(t => t.trade_date).filter(Boolean).sort();
+    startStr = dates[0] || todayStr;
+  } else if (preset === 'ytd') {
+    startStr = `${today.getFullYear()}-01-01`;
+  } else {
+    const months = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 }[preset];
+    const d = new Date(today); d.setMonth(d.getMonth() - months);
+    startStr = d.toISOString().slice(0, 10);
+  }
+  _txRange.start = startStr;
+  _txRange.end = todayStr;
+  document.getElementById('txStart').value = startStr;
+  document.getElementById('txEnd').value = todayStr;
+}
+
+document.getElementById('txStart').addEventListener('change', e => {
+  _txRange.start = e.target.value || null;
+  document.querySelectorAll('#txPresets .btn-ghost').forEach(b => b.classList.remove('active'));
+  loadTransactions();
+});
+document.getElementById('txEnd').addEventListener('change', e => {
+  _txRange.end = e.target.value || null;
+  document.querySelectorAll('#txPresets .btn-ghost').forEach(b => b.classList.remove('active'));
+  loadTransactions();
+});
+document.querySelectorAll('#txPresets .btn-ghost').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    // Load all first to know earliest date, then filter
+    const res = await fetch('/api/transactions');
+    const all = await res.json();
+    applyTxPreset(btn.dataset.preset, all);
+    document.querySelectorAll('#txPresets .btn-ghost').forEach(b => b.classList.toggle('active', b === btn));
+    loadTransactions();
+  });
+});
+
+// ── Transactions column picker ─────────────────────────────────────────────
+
+function renderTxColumnPicker() {
+  const container = document.getElementById('txColumnPicker');
+  const headerCells = _txColumns.map(col => {
+    const role = _txColRoles[col] || '';
+    const opts = [`<option value="">— ignore —</option>`]
+      .concat(TX_ROLES.map(r => `<option value="${r}"${role===r?' selected':''}>${TX_ROLE_LABEL[r]}</option>`))
+      .join('');
+    const color = TX_ROLE_COLOR[role] || 'transparent';
+    return `<th style="${role ? `border-bottom:2px solid ${color}` : ''}">
+      <div class="col-head">
+        <div class="col-name" title="${escHtml(col)}">${escHtml(col)}</div>
+        <select class="col-role-select" data-col="${escHtml(col)}">${opts}</select>
+      </div>
+    </th>`;
+  }).join('');
+  const dataRows = _txRows.map(row =>
+    `<tr>${_txColumns.map((col, i) => `<td>${escHtml(String(row[i] ?? ''))}</td>`).join('')}</tr>`
+  ).join('');
+  container.innerHTML = `
+    <table class="col-picker-table">
+      <thead><tr>${headerCells}</tr></thead>
+      <tbody>${dataRows || `<tr><td colspan="${_txColumns.length}" class="empty">No preview rows</td></tr>`}</tbody>
+    </table>`;
+
+  container.querySelectorAll('.col-role-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const col = sel.dataset.col;
+      const next = sel.value || null;
+      if (next) {
+        for (const c of Object.keys(_txColRoles)) {
+          if (_txColRoles[c] === next && c !== col) _txColRoles[c] = null;
+        }
+      }
+      _txColRoles[col] = next;
+      renderTxColumnPicker();
+      updateTxImportBtn();
+    });
+  });
+}
+
+function updateTxImportBtn() {
+  const roles = Object.values(_txColRoles);
+  document.getElementById('txConfirmBtn').disabled = !roles.includes('date');
+}
+
+document.getElementById('txPreviewBtn').addEventListener('click', async () => {
+  const broker = document.getElementById('txBrokerName').value.trim();
+  const status = document.getElementById('txPreviewStatus');
+  if (!broker) { setStatus(status, 'Enter a broker name first', 'err'); return; }
+  const file = document.getElementById('txCsvFile').files[0];
+  if (!file) { setStatus(status, 'Select a CSV file first', 'err'); return; }
+
+  _txFile = file; _txFileName = file.name; _txBroker = broker;
+  _txAccount = document.getElementById('txAccountName').value.trim();
+
+  setStatus(status, 'Reading…', '');
+  const fd = new FormData();
+  fd.append('broker', broker);
+  fd.append('file', _txFile, 'import.csv');
+  const res = await fetch('/api/transactions/upload/preview', { method: 'POST', body: fd });
+  const json = await res.json();
+  if (!res.ok) { setStatus(status, json.error, 'err'); return; }
+
+  setStatus(status, '', '');
+  _txColumns = json.columns;
+  _txRows = json.rows || [];
+  _txColRoles = {};
+  for (const col of _txColumns) _txColRoles[col] = null;
+  const m = json.mapping;
+  for (const [role, col] of Object.entries(m)) {
+    if (col && _txColumns.includes(col)) _txColRoles[col] = role;
+  }
+  document.getElementById('txMappingTitle').textContent =
+    `${_txFileName} — ${_txColumns.length} columns found`;
+  renderTxColumnPicker();
+  updateTxImportBtn();
+  document.getElementById('txImportStep1').style.display = 'none';
+  document.getElementById('txImportStep2').style.display = 'block';
+});
+
+document.getElementById('txBackBtn').addEventListener('click', () => {
+  document.getElementById('txImportStep2').style.display = 'none';
+  document.getElementById('txImportStep1').style.display = 'block';
+  document.getElementById('txPreviewStatus').textContent = '';
+});
+
+document.getElementById('txConfirmBtn').addEventListener('click', async () => {
+  const status = document.getElementById('txConfirmStatus');
+  const mapping = {};
+  for (const [col, role] of Object.entries(_txColRoles)) {
+    if (role) mapping[role] = col;
+  }
+  if (!mapping.date) { setStatus(status, 'Assign a Date column first', 'err'); return; }
+
+  const fd = new FormData();
+  fd.append('broker', _txBroker);
+  fd.append('account', _txAccount);
+  fd.append('file', _txFile, 'import.csv');
+  fd.append('mapping', JSON.stringify(mapping));
+  fd.append('replace', document.getElementById('txReplace').checked ? 'true' : 'false');
+
+  setStatus(status, 'Importing…', '');
+  let res, json;
+  try {
+    res = await fetch('/api/transactions/upload/confirm', { method: 'POST', body: fd });
+    const text = await res.text();
+    try { json = JSON.parse(text); } catch { throw new Error('Server returned: ' + text.slice(0, 200)); }
+  } catch (err) {
+    setStatus(status, 'Import failed: ' + err.message, 'err'); return;
+  }
+  if (!res.ok) { setStatus(status, json.error || 'Import failed', 'err'); return; }
+
+  setStatus(status, `Imported ${json.imported} transactions for ${json.broker}`, 'ok');
+  document.getElementById('txImportStep2').style.display = 'none';
+  document.getElementById('txImportStep1').style.display = 'block';
+  _txFile = null;
+  document.getElementById('txBrokerName').value = '';
+  document.getElementById('txAccountName').value = '';
+  document.getElementById('txCsvFile').value = '';
+  loadTransactions();
+});
+
 // Initial load
 loadPortfolio();
 loadSnapshots();
 loadProfiles();
 loadSources();
+loadTransactions();

@@ -468,5 +468,205 @@ def delete_broker_profile(broker):
     return jsonify({"ok": True})
 
 
+# ── Transactions ──────────────────────────────────────────────────────────────
+
+# Column aliases for transaction CSVs
+_TX_COL_ALIASES = {
+    'date': 'date', 'trade date': 'date', 'transaction date': 'date',
+    'settle date': 'date', 'run date': 'date', 'activity date': 'date',
+    'posted date': 'date', 'settlement date': 'date',
+    'action': 'action', 'transaction type': 'action', 'type': 'action',
+    'description': 'description', 'transaction description': 'description',
+    'symbol': 'symbol', 'ticker': 'symbol', 'security': 'symbol',
+    'shares': 'shares', 'quantity': 'shares', 'qty': 'shares',
+    'price': 'price', 'price ($)': 'price', 'price per share': 'price',
+    'amount': 'amount', 'amount ($)': 'amount', 'net amount': 'amount',
+    'total amount': 'amount', 'value': 'amount', 'net': 'amount',
+    'fees': 'fees', 'commission': 'fees', 'fee': 'fees', 'charges': 'fees',
+    'account': 'account', 'account number': 'account',
+}
+
+_ACTION_MAP = [
+    (['reinvest', 'drip'], 'reinvest'),
+    (['dividend', 'div ', 'divid', 'qual div', 'cash div', 'ord div', 'spec div'], 'dividend'),
+    (['interest', 'int '], 'interest'),
+    (['bought', 'buy', 'purchase', 'you bought'], 'buy'),
+    (['sold', 'sell', 'sale', 'you sold'], 'sell'),
+    (['fee', 'commission', 'charge', 'margin interest'], 'fee'),
+    (['transfer', 'journaled', 'acat', 'internal transfer'], 'transfer'),
+    (['deposit', 'contribution', 'journal'], 'deposit'),
+    (['withdrawal', 'disbursement'], 'withdrawal'),
+]
+
+def _normalize_action(raw: str) -> str:
+    s = str(raw or '').lower().strip()
+    for keywords, action in _ACTION_MAP:
+        if any(kw in s for kw in keywords):
+            return action
+    return 'other'
+
+def _detect_tx_mapping(columns):
+    m = {r: None for r in ('date', 'action', 'symbol', 'shares', 'price', 'amount', 'fees', 'description')}
+    for col in columns:
+        role = _TX_COL_ALIASES.get(_norm(col))
+        if role and m.get(role) is None:
+            m[role] = col
+    return m
+
+def _parse_date(raw: str) -> str | None:
+    """Try to parse a date string to YYYY-MM-DD."""
+    s = str(raw or '').strip()
+    if not s or s in ('-', '--', 'n/a'):
+        return None
+    for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%m/%d/%y', '%d/%m/%Y', '%B %d, %Y', '%b %d, %Y', '%Y%m%d'):
+        try:
+            from datetime import datetime
+            return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+    # Fall back: first 10 chars if they look like YYYY-MM-DD
+    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
+        return s[:10]
+    return None
+
+def _parse_tx_rows(file_bytes: bytes, mapping: dict, broker: str, account: str) -> list[dict]:
+    df = _read_csv(file_bytes)
+    columns = list(df.columns)
+
+    date_col   = mapping.get('date')
+    action_col = mapping.get('action') or mapping.get('description')
+    sym_col    = mapping.get('symbol')
+    shr_col    = mapping.get('shares')
+    price_col  = mapping.get('price')
+    amt_col    = mapping.get('amount')
+    fees_col   = mapping.get('fees')
+    desc_col   = mapping.get('description')
+    acct_col   = mapping.get('account')
+
+    if not date_col:
+        raise ValueError("A Date column must be mapped.")
+    if not action_col and not amt_col:
+        raise ValueError("At least an Action or Amount column must be mapped.")
+    missing = [c for c in [date_col, action_col, sym_col, shr_col, price_col, amt_col, fees_col, desc_col, acct_col]
+               if c and c not in columns]
+    if missing:
+        raise ValueError(f"Column(s) not in file: {', '.join(missing)}")
+
+    rows = []
+    for _, r in df.iterrows():
+        trade_date = _parse_date(r.get(date_col) if date_col else None)
+        if not trade_date:
+            continue
+
+        raw_action = str(r.get(action_col) or r.get(desc_col) or '').strip()
+        action = _normalize_action(raw_action)
+
+        sym_raw = str(r.get(sym_col) or '' if sym_col else '').strip().upper()
+        symbol = sym_raw if _SYMBOL_RE.match(sym_raw) else ''
+
+        shares_raw = _parse_num(r.get(shr_col)) if shr_col else None
+        shares = shares_raw if shares_raw and shares_raw != 0 else None
+
+        price_raw = _parse_num(r.get(price_col)) if price_col else None
+        price = price_raw if price_raw and price_raw != 0 else None
+
+        amount_raw = _parse_num(r.get(amt_col)) if amt_col else None
+        amount = amount_raw if amt_col else None
+
+        fees_raw = _parse_num(r.get(fees_col)) if fees_col else None
+        fees = fees_raw if fees_raw and fees_raw != 0 else 0.0
+
+        desc = str(r.get(desc_col) or '').strip()[:200] if desc_col else ''
+        row_account = str(r.get(acct_col) or account or '').strip() if acct_col else (account or '')
+
+        rows.append({
+            'trade_date': trade_date,
+            'symbol': symbol,
+            'action': action,
+            'raw_action': raw_action[:100],
+            'shares': shares,
+            'price': price,
+            'amount': amount,
+            'fees': fees,
+            'broker': broker,
+            'account': row_account,
+            'description': desc,
+        })
+
+    if not rows:
+        raise ValueError("No valid transaction rows found. Check the Date column mapping.")
+    return rows
+
+
+@app.route("/api/transactions", methods=["GET"])
+def list_transactions():
+    start = request.args.get('start')
+    end = request.args.get('end')
+    broker = request.args.get('broker')
+    return jsonify(db.get_transactions(start_date=start, end_date=end, broker=broker))
+
+
+@app.route("/api/transactions/summary", methods=["GET"])
+def transactions_summary():
+    start = request.args.get('start')
+    end = request.args.get('end')
+    return jsonify(db.get_transaction_summary(start_date=start, end_date=end))
+
+
+@app.route("/api/transactions/<int:tx_id>", methods=["DELETE"])
+def delete_transaction(tx_id):
+    db.delete_transaction(tx_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/transactions/upload/preview", methods=["POST"])
+def tx_upload_preview():
+    broker = request.form.get("broker", "").strip()
+    if not broker:
+        return jsonify({"error": "Broker name is required"}), 400
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+    file_bytes = file.read()
+    try:
+        df = _read_csv(file_bytes)
+    except Exception as e:
+        return jsonify({"error": f"Could not read CSV: {e}"}), 400
+    columns = list(df.columns)
+    if not columns:
+        return jsonify({"error": "No columns found."}), 400
+    mapping = _detect_tx_mapping(columns)
+    sample_rows = [
+        [str(cell) if cell is not None else '' for cell in row]
+        for row in df.head(6).values.tolist()
+    ]
+    return jsonify({"columns": columns, "rows": sample_rows, "mapping": mapping})
+
+
+@app.route("/api/transactions/upload/confirm", methods=["POST"])
+def tx_upload_confirm():
+    broker = request.form.get("broker", "").strip()
+    account = request.form.get("account", "").strip()
+    if not broker:
+        return jsonify({"error": "Broker name is required"}), 400
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+    mapping_str = request.form.get("mapping", "")
+    try:
+        mapping = json.loads(mapping_str)
+    except (json.JSONDecodeError, TypeError):
+        return jsonify({"error": "Invalid mapping data"}), 400
+    replace = request.form.get("replace") == "true"
+    try:
+        rows = _parse_tx_rows(file.read(), mapping, broker, account)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if replace:
+        db.delete_transactions_by_broker_account(broker, account or None)
+    count = db.insert_transactions(rows)
+    return jsonify({"imported": count, "broker": broker, "account": account})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
