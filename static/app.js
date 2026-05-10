@@ -629,11 +629,89 @@ async function loadProfiles() {
 
 // ── History / Snapshots ────────────────────────────────────────────────────
 
+let _allSnapshots = [];
+let _perfRange = { start: null, end: null };  // YYYY-MM-DD strings
+
 async function loadSnapshots() {
   const res = await fetch('/api/snapshots');
-  const snapshots = await res.json();
-  renderTimeline(snapshots);
-  renderSnapshotList(snapshots);
+  _allSnapshots = await res.json();
+  initPerfRangeIfEmpty();
+  renderPerformance();
+  renderSnapshotList(filterSnapshotsByRange(_allSnapshots));
+}
+
+function snapDateStr(iso) {
+  // 'YYYY-MM-DD HH:MM:SS' or ISO → 'YYYY-MM-DD'
+  if (!iso) return '';
+  return String(iso).slice(0, 10);
+}
+
+function filterSnapshotsByRange(snapshots) {
+  const { start, end } = _perfRange;
+  return snapshots.filter(s => {
+    const d = snapDateStr(s.taken_at);
+    if (start && d < start) return false;
+    if (end && d > end) return false;
+    return true;
+  });
+}
+
+function initPerfRangeIfEmpty() {
+  const startEl = document.getElementById('perfStart');
+  const endEl = document.getElementById('perfEnd');
+  if (!_allSnapshots.length) return;
+  const dates = _allSnapshots.map(s => snapDateStr(s.taken_at)).filter(Boolean).sort();
+  const minDate = dates[0];
+  const maxDate = dates[dates.length - 1];
+  startEl.min = endEl.min = minDate;
+  startEl.max = endEl.max = maxDate;
+  if (!_perfRange.start) { _perfRange.start = minDate; startEl.value = minDate; }
+  if (!_perfRange.end) { _perfRange.end = maxDate; endEl.value = maxDate; }
+}
+
+function renderPerformance() {
+  const inRange = filterSnapshotsByRange(_allSnapshots);
+  // Snapshots come back DESC (newest first); for performance we want ASC
+  const valued = inRange.filter(s => s.total_value != null).slice().reverse();
+
+  const noData = document.getElementById('perfNoData');
+  const wrap = document.getElementById('timelineWrap');
+
+  if (!valued.length) {
+    document.getElementById('perfStartValue').textContent = '—';
+    document.getElementById('perfEndValue').textContent = '—';
+    document.getElementById('perfChange').textContent = '—';
+    document.getElementById('perfChange').className = 'value';
+    document.getElementById('perfReturn').textContent = '—';
+    document.getElementById('perfReturn').className = 'value';
+    document.getElementById('perfStartDate').textContent = '';
+    document.getElementById('perfEndDate').textContent = '';
+    wrap.style.display = 'none';
+    noData.style.display = 'block';
+    if (timelineChart) { timelineChart.destroy(); timelineChart = null; }
+    return;
+  }
+  noData.style.display = 'none';
+
+  const first = valued[0];
+  const last = valued[valued.length - 1];
+  const change = last.total_value - first.total_value;
+  const ret = first.total_value ? change / first.total_value * 100 : null;
+
+  document.getElementById('perfStartValue').textContent = fmt(first.total_value);
+  document.getElementById('perfEndValue').textContent = fmt(last.total_value);
+  document.getElementById('perfStartDate').textContent = fmtDate(first.taken_at);
+  document.getElementById('perfEndDate').textContent = fmtDate(last.taken_at);
+
+  const changeEl = document.getElementById('perfChange');
+  changeEl.textContent = (change >= 0 ? '+' : '-') + fmt(Math.abs(change));
+  changeEl.className = 'value ' + gainClass(change);
+
+  const retEl = document.getElementById('perfReturn');
+  retEl.textContent = fmtPct(ret);
+  retEl.className = 'value ' + gainClass(ret);
+
+  renderTimeline(inRange);
 }
 
 function renderTimeline(snapshots) {
@@ -904,6 +982,67 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
       b.classList.toggle('active', b === btn)
     );
     renderTable(_lastHoldings);
+  });
+});
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.tab-pane').forEach(p =>
+      p.classList.toggle('active', p.id === 'tab' + tab.charAt(0).toUpperCase() + tab.slice(1))
+    );
+  });
+});
+
+// ── Performance date range wiring ─────────────────────────────────────────
+
+function refreshPerfTab() {
+  renderPerformance();
+  renderSnapshotList(filterSnapshotsByRange(_allSnapshots));
+}
+
+document.getElementById('perfStart').addEventListener('change', e => {
+  _perfRange.start = e.target.value || null;
+  document.querySelectorAll('.perf-presets .btn-ghost').forEach(b => b.classList.remove('active'));
+  refreshPerfTab();
+});
+document.getElementById('perfEnd').addEventListener('change', e => {
+  _perfRange.end = e.target.value || null;
+  document.querySelectorAll('.perf-presets .btn-ghost').forEach(b => b.classList.remove('active'));
+  refreshPerfTab();
+});
+
+document.querySelectorAll('.perf-presets .btn-ghost').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const preset = btn.dataset.preset;
+    if (!_allSnapshots.length) return;
+
+    const dates = _allSnapshots.map(s => snapDateStr(s.taken_at)).filter(Boolean).sort();
+    const minDate = dates[0];
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+
+    let startStr;
+    if (preset === 'all') {
+      startStr = minDate;
+    } else if (preset === 'ytd') {
+      startStr = `${today.getFullYear()}-01-01`;
+    } else {
+      const months = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 }[preset];
+      const d = new Date(today);
+      d.setMonth(d.getMonth() - months);
+      startStr = d.toISOString().slice(0, 10);
+    }
+
+    _perfRange.start = startStr;
+    _perfRange.end = todayStr;
+    document.getElementById('perfStart').value = startStr;
+    document.getElementById('perfEnd').value = todayStr;
+    document.querySelectorAll('.perf-presets .btn-ghost').forEach(b => b.classList.toggle('active', b === btn));
+    refreshPerfTab();
   });
 });
 

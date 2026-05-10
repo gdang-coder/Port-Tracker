@@ -13,7 +13,14 @@
     <button id="refreshBtn" class="btn-ghost" title="Refresh prices">&#8635; Refresh</button>
   </header>
 
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="portfolio">Portfolio</button>
+    <button class="tab-btn" data-tab="performance">Performance</button>
+  </nav>
+
   <main>
+    <!-- ============ PORTFOLIO TAB ============ -->
+    <div id="tabPortfolio" class="tab-pane active">
     <!-- Summary cards -->
     <section class="cards" id="summaryCards">
       <div class="card">
@@ -155,26 +162,77 @@
       </div>
     </section>
 
-    <!-- History section -->
-    <section class="history-section">
-      <div class="history-header">
-        <div>
-          <h2>Portfolio History</h2>
-          <p class="hint" style="margin:4px 0 0">Snapshots are saved automatically on every import. You can also save one manually.</p>
+    </div><!-- /#tabPortfolio -->
+
+    <!-- ============ PERFORMANCE TAB ============ -->
+    <div id="tabPerformance" class="tab-pane">
+
+      <!-- Date range controls -->
+      <section class="perf-controls">
+        <div class="perf-range">
+          <div class="field">
+            <label for="perfStart">Start date</label>
+            <input id="perfStart" type="date" />
+          </div>
+          <div class="field">
+            <label for="perfEnd">End date</label>
+            <input id="perfEnd" type="date" />
+          </div>
+          <div class="perf-presets">
+            <button class="btn-ghost btn-sm" data-preset="1m">1M</button>
+            <button class="btn-ghost btn-sm" data-preset="3m">3M</button>
+            <button class="btn-ghost btn-sm" data-preset="6m">6M</button>
+            <button class="btn-ghost btn-sm" data-preset="ytd">YTD</button>
+            <button class="btn-ghost btn-sm" data-preset="1y">1Y</button>
+            <button class="btn-ghost btn-sm" data-preset="all">All</button>
+          </div>
         </div>
-        <button class="btn-ghost" id="saveSnapshotBtn">&#9632; Save Snapshot</button>
-      </div>
+      </section>
 
-      <!-- Timeline chart -->
-      <div id="timelineWrap" style="display:none" class="timeline-wrap">
-        <canvas id="timelineChart"></canvas>
-      </div>
+      <!-- Performance summary cards -->
+      <section class="cards" id="perfCards">
+        <div class="card">
+          <span class="label">Starting Value</span>
+          <span class="value" id="perfStartValue">—</span>
+          <span class="card-sub" id="perfStartDate"></span>
+        </div>
+        <div class="card">
+          <span class="label">Ending Value</span>
+          <span class="value" id="perfEndValue">—</span>
+          <span class="card-sub" id="perfEndDate"></span>
+        </div>
+        <div class="card">
+          <span class="label">Change</span>
+          <span class="value" id="perfChange">—</span>
+        </div>
+        <div class="card">
+          <span class="label">Return</span>
+          <span class="value" id="perfReturn">—</span>
+        </div>
+      </section>
 
-      <!-- Snapshot list -->
-      <div id="snapshotList" class="snapshot-list">
-        <p class="empty" id="snapshotEmpty">No snapshots yet. Import a CSV to create the first one.</p>
-      </div>
-    </section>
+      <section class="history-section">
+        <div class="history-header">
+          <div>
+            <h2>Portfolio History</h2>
+            <p class="hint" style="margin:4px 0 0">Snapshots are saved automatically on every import. You can also save one manually.</p>
+          </div>
+          <button class="btn-ghost" id="saveSnapshotBtn">&#9632; Save Snapshot</button>
+        </div>
+
+        <!-- Timeline chart -->
+        <div id="timelineWrap" style="display:none" class="timeline-wrap">
+          <canvas id="timelineChart"></canvas>
+        </div>
+
+        <p class="empty" id="perfNoData" style="display:none">No snapshots in this date range.</p>
+
+        <!-- Snapshot list -->
+        <div id="snapshotList" class="snapshot-list">
+          <p class="empty" id="snapshotEmpty">No snapshots yet. Import a CSV to create the first one.</p>
+        </div>
+      </section>
+    </div><!-- /#tabPerformance -->
   </main>
 
   <!-- Add holding modal -->
