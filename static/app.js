@@ -123,6 +123,159 @@ function renderCharts(holdings) {
   });
 }
 
+// ── Import: two-step flow ──────────────────────────────────────────────────
+
+let _previewColumns = [];
+let _previewBroker = '';
+
+document.getElementById('previewBtn').addEventListener('click', async () => {
+  const broker = document.getElementById('brokerName').value.trim();
+  const file = document.getElementById('csvFile').files[0];
+  const status = document.getElementById('previewStatus');
+
+  if (!broker) { setStatus(status, 'Enter a broker name first', 'err'); return; }
+  if (!file)   { setStatus(status, 'Select a CSV file first', 'err'); return; }
+
+  setStatus(status, 'Reading file…', '');
+
+  const fd = new FormData();
+  fd.append('broker', broker);
+  fd.append('file', file);
+
+  const res = await fetch('/api/upload/preview', { method: 'POST', body: fd });
+  const json = await res.json();
+
+  if (!res.ok) {
+    setStatus(status, json.error, 'err');
+    return;
+  }
+
+  setStatus(status, '', '');
+  _previewColumns = json.columns;
+  _previewBroker = broker;
+
+  // Populate column dropdowns
+  const opts = ['', ...json.columns].map(c =>
+    `<option value="${escHtml(c)}">${escHtml(c) || '— select —'}</option>`
+  ).join('');
+  ['mapSymbol', 'mapShares', 'mapCost'].forEach(id => {
+    document.getElementById(id).innerHTML = opts;
+  });
+
+  // Pre-select detected / profile mapping
+  const m = json.mapping;
+  if (m.symbol) document.getElementById('mapSymbol').value = m.symbol;
+  if (m.shares) document.getElementById('mapShares').value = m.shares;
+  if (m.cost)   document.getElementById('mapCost').value   = m.cost;
+  document.getElementById('costIsTotal').checked = !!m.cost_is_total;
+  document.getElementById('saveProfile').checked = !json.has_profile;
+  document.getElementById('saveProfileBroker').textContent = `"${broker}"`;
+
+  // Profile banner
+  const banner = document.getElementById('profileBanner');
+  if (json.source === 'profile') {
+    banner.textContent = `✓ Using saved profile for ${broker} — columns pre-filled. Adjust if the export format changed.`;
+    banner.style.display = 'block';
+    banner.className = 'profile-banner profile-banner-ok';
+  } else if (json.source === 'auto') {
+    banner.textContent = 'Columns auto-detected. Review the mapping below before importing.';
+    banner.style.display = 'block';
+    banner.className = 'profile-banner profile-banner-info';
+  } else {
+    banner.style.display = 'none';
+  }
+
+  const colCount = json.columns.length;
+  document.getElementById('mappingTitle').textContent =
+    `${file.name} — ${colCount} column${colCount !== 1 ? 's' : ''} found`;
+
+  document.getElementById('importStep1').style.display = 'none';
+  document.getElementById('importStep2').style.display = 'block';
+});
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  document.getElementById('importStep2').style.display = 'none';
+  document.getElementById('importStep1').style.display = 'block';
+  document.getElementById('previewStatus').textContent = '';
+});
+
+document.getElementById('confirmImportBtn').addEventListener('click', async () => {
+  const status = document.getElementById('confirmStatus');
+  const broker = _previewBroker;
+  const file = document.getElementById('csvFile').files[0];
+
+  const mapping = {
+    symbol: document.getElementById('mapSymbol').value,
+    shares: document.getElementById('mapShares').value,
+    cost:   document.getElementById('mapCost').value,
+    cost_is_total: document.getElementById('costIsTotal').checked,
+  };
+
+  if (!mapping.symbol || !mapping.shares || !mapping.cost) {
+    setStatus(status, 'All three columns must be selected', 'err');
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('broker', broker);
+  fd.append('file', file);
+  fd.append('mapping', JSON.stringify(mapping));
+  fd.append('save_profile', document.getElementById('saveProfile').checked ? 'true' : 'false');
+
+  setStatus(status, 'Importing…', '');
+  const res = await fetch('/api/upload/confirm', { method: 'POST', body: fd });
+  const json = await res.json();
+
+  if (!res.ok) {
+    setStatus(status, json.error, 'err');
+    return;
+  }
+
+  setStatus(status, `Imported ${json.imported} holdings for ${json.broker}`, 'ok');
+  document.getElementById('importStep2').style.display = 'none';
+  document.getElementById('importStep1').style.display = 'block';
+  document.getElementById('brokerName').value = '';
+  document.getElementById('csvFile').value = '';
+
+  loadPortfolio();
+  loadSnapshots();
+  loadProfiles();
+});
+
+// ── Broker profiles ────────────────────────────────────────────────────────
+
+async function loadProfiles() {
+  const res = await fetch('/api/broker-profiles');
+  const profiles = await res.json();
+  const wrap = document.getElementById('profilesWrap');
+  const list = document.getElementById('profilesList');
+
+  if (!profiles.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+  list.innerHTML = profiles.map(p => `
+    <div class="profile-row">
+      <span class="profile-broker">${escHtml(p.broker)}</span>
+      <span class="profile-cols">
+        Symbol: <code>${escHtml(p.symbol_col)}</code> &nbsp;
+        Shares: <code>${escHtml(p.shares_col)}</code> &nbsp;
+        Cost: <code>${escHtml(p.cost_col)}</code>${p.cost_is_total ? ' <em>(total)</em>' : ''}
+      </span>
+      <button class="del-btn" data-broker="${escHtml(p.broker)}" title="Delete profile">✕</button>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Delete the "${btn.dataset.broker}" profile?`)) return;
+      await fetch(`/api/broker-profiles/${encodeURIComponent(btn.dataset.broker)}`, { method: 'DELETE' });
+      loadProfiles();
+    });
+  });
+}
+
 // ── History / Snapshots ────────────────────────────────────────────────────
 
 async function loadSnapshots() {
@@ -134,7 +287,6 @@ async function loadSnapshots() {
 
 function renderTimeline(snapshots) {
   const wrap = document.getElementById('timelineWrap');
-  // Only show if we have at least 2 snapshots with price data
   const withValue = snapshots.filter(s => s.total_value != null).reverse();
   if (withValue.length < 2) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
@@ -189,13 +341,10 @@ function renderSnapshotList(snapshots) {
 
   if (!snapshots.length) {
     empty.style.display = 'block';
-    // Remove any existing snapshot rows
     list.querySelectorAll('.snapshot-item').forEach(el => el.remove());
     return;
   }
   empty.style.display = 'none';
-
-  // Rebuild list
   list.querySelectorAll('.snapshot-item').forEach(el => el.remove());
 
   for (const snap of snapshots) {
@@ -227,7 +376,6 @@ function renderSnapshotList(snapshots) {
     `;
 
     list.appendChild(item);
-
     item.querySelector('.snap-expand').addEventListener('click', () => toggleSnapshotDetail(snap.id));
     item.querySelector('.snap-del').addEventListener('click', async () => {
       if (!confirm('Delete this snapshot?')) return;
@@ -250,7 +398,6 @@ async function toggleSnapshotDetail(id) {
   btn.textContent = 'Loading…';
   const res = await fetch(`/api/snapshots/${id}`);
   const snap = await res.json();
-
   detail.innerHTML = buildSnapshotTable(snap.holdings);
   detail.style.display = 'block';
   btn.textContent = 'Hide ▴';
@@ -310,47 +457,19 @@ function setStatus(el, msg, type) {
   if (type === 'ok') setTimeout(() => { el.textContent = ''; el.className = 'status-msg'; }, 3000);
 }
 
-// ── Event wiring ───────────────────────────────────────────────────────────
-
-document.getElementById('importForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const status = document.getElementById('importStatus');
-  const broker = document.getElementById('brokerName').value.trim();
-  const file = document.getElementById('csvFile').files[0];
-  if (!broker || !file) return;
-
-  const fd = new FormData();
-  fd.append('broker', broker);
-  fd.append('file', file);
-
-  setStatus(status, 'Importing…', '');
-  const res = await fetch('/api/upload', { method: 'POST', body: fd });
-  const json = await res.json();
-
-  if (!res.ok) {
-    setStatus(status, json.error, 'err');
-  } else {
-    setStatus(status, `Imported ${json.imported} holdings for ${json.broker}`, 'ok');
-    e.target.reset();
-    loadPortfolio();
-    loadSnapshots();
-  }
-});
+// ── Other event wiring ─────────────────────────────────────────────────────
 
 document.getElementById('saveSnapshotBtn').addEventListener('click', async () => {
   const label = prompt('Snapshot label (optional):', 'Manual snapshot');
-  if (label === null) return; // cancelled
+  if (label === null) return;
   const res = await fetch('/api/snapshots', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ label: label.trim() || 'Manual snapshot' }),
   });
   const json = await res.json();
-  if (!res.ok) {
-    alert(json.error);
-  } else {
-    loadSnapshots();
-  }
+  if (!res.ok) { alert(json.error); return; }
+  loadSnapshots();
 });
 
 document.getElementById('addHoldingBtn').addEventListener('click', () => {
@@ -393,3 +512,4 @@ document.getElementById('refreshBtn').addEventListener('click', loadPortfolio);
 // Initial load
 loadPortfolio();
 loadSnapshots();
+loadProfiles();

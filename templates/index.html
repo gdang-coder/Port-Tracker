@@ -76,20 +76,71 @@
 
     <!-- Import section -->
     <section class="import-section">
-      <h2>Import CSV</h2>
-      <p class="hint">CSV must have columns: <code>symbol</code> (or <code>ticker</code>), <code>shares</code> (or <code>qty</code>), <code>cost</code> (or <code>cost_per_share</code> / <code>avg_cost</code>). Importing replaces all existing holdings for that broker and saves a snapshot automatically.</p>
-      <form id="importForm" class="import-form">
-        <div class="field">
-          <label for="brokerName">Broker name</label>
-          <input id="brokerName" type="text" placeholder="e.g. Fidelity" required />
+      <div class="import-top-bar">
+        <h2>Import CSV</h2>
+      </div>
+
+      <!-- Step 1: pick broker + file -->
+      <div id="importStep1">
+        <p class="hint">Enter the broker name and upload their CSV export. The app will detect the column layout automatically — you can review and save it as a profile so future imports just work.</p>
+        <div class="import-form">
+          <div class="field">
+            <label for="brokerName">Broker name</label>
+            <input id="brokerName" type="text" placeholder="e.g. Fidelity" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="csvFile">CSV file</label>
+            <input id="csvFile" type="file" accept=".csv,text/csv" />
+          </div>
+          <button class="btn" id="previewBtn">Preview columns</button>
+          <span id="previewStatus" class="status-msg"></span>
         </div>
-        <div class="field">
-          <label for="csvFile">CSV file</label>
-          <input id="csvFile" type="file" accept=".csv,text/csv" required />
+      </div>
+
+      <!-- Step 2: confirm mapping -->
+      <div id="importStep2" style="display:none">
+        <div class="mapping-header">
+          <span id="mappingTitle" class="mapping-title"></span>
+          <button class="btn-ghost btn-sm" id="backBtn">&#8592; Change file</button>
         </div>
-        <button type="submit" class="btn">Import</button>
-        <span id="importStatus" class="status-msg"></span>
-      </form>
+        <div id="profileBanner" class="profile-banner" style="display:none"></div>
+        <div class="mapping-grid">
+          <div class="field">
+            <label>Symbol column <span class="req">*</span></label>
+            <select id="mapSymbol"></select>
+          </div>
+          <div class="field">
+            <label>Shares column <span class="req">*</span></label>
+            <select id="mapShares"></select>
+          </div>
+          <div class="field">
+            <label>Cost column <span class="req">*</span></label>
+            <select id="mapCost"></select>
+          </div>
+          <div class="field field-check">
+            <label class="check-label">
+              <input type="checkbox" id="costIsTotal" />
+              Cost column is the <strong>total</strong> amount paid (not per-share)
+            </label>
+          </div>
+        </div>
+        <div class="mapping-footer">
+          <label class="check-label">
+            <input type="checkbox" id="saveProfile" checked />
+            Save as <strong id="saveProfileBroker"></strong> profile
+          </label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn" id="confirmImportBtn">Import</button>
+            <span id="confirmStatus" class="status-msg"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Saved profiles list -->
+      <div id="profilesWrap" style="display:none">
+        <div class="profiles-divider">Saved profiles</div>
+        <div id="profilesList" class="profiles-list"></div>
+      </div>
     </section>
 
     <!-- History section -->

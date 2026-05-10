@@ -179,9 +179,113 @@ td.empty { text-align: center; color: var(--muted); padding: 40px; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.import-section h2 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.import-top-bar { display: flex; align-items: center; justify-content: space-between; }
+.import-section h2 { font-size: 15px; font-weight: 600; }
+
+/* Mapping step */
+.mapping-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mapping-title { font-size: 13px; color: var(--muted); }
+
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+.profile-banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.profile-banner-ok   { background: rgba(34,197,94,0.1);  color: #86efac; border: 1px solid rgba(34,197,94,0.2); }
+.profile-banner-info { background: rgba(99,102,241,0.1); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.2); }
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+select:focus { border-color: var(--accent); }
+
+.field-check { justify-content: flex-end; }
+
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.check-label input[type="checkbox"] { cursor: pointer; accent-color: var(--accent); width: 14px; height: 14px; }
+
+.mapping-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Saved profiles list */
+.profiles-divider {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  padding: 4px 0 10px;
+  border-top: 1px solid var(--border);
+}
+
+.profiles-list { display: flex; flex-direction: column; gap: 8px; }
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.profile-broker { font-weight: 600; font-size: 13px; min-width: 80px; }
+.profile-cols { font-size: 12px; color: var(--muted); flex: 1; }
+.profile-cols code {
+  background: rgba(99,102,241,0.1);
+  color: #a5b4fc;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.req { color: var(--red); }
 
 .hint {
   color: var(--muted);

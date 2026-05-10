@@ -34,6 +34,15 @@ def init_db():
                 holdings_json TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS broker_profiles (
+                broker TEXT PRIMARY KEY,
+                symbol_col TEXT NOT NULL,
+                shares_col TEXT NOT NULL,
+                cost_col TEXT NOT NULL,
+                cost_is_total INTEGER NOT NULL DEFAULT 0
+            )
+        """)
 
 
 def get_all_holdings():
@@ -45,7 +54,6 @@ def get_all_holdings():
 
 
 def upsert_holding(symbol, shares, cost_per_share, broker):
-    """Add or update a holding (merges shares if same symbol+broker exists)."""
     with get_conn() as conn:
         existing = conn.execute(
             "SELECT id, shares, cost_per_share FROM holdings WHERE symbol=? AND broker=?",
@@ -75,7 +83,6 @@ def delete_holding(holding_id):
 
 
 def replace_broker_holdings(broker, rows):
-    """Replace all holdings for a broker with the given rows."""
     with get_conn() as conn:
         conn.execute("DELETE FROM holdings WHERE broker=?", (broker,))
         conn.executemany(
@@ -87,7 +94,6 @@ def replace_broker_holdings(broker, rows):
 # --- Snapshots ---
 
 def save_snapshot(label, enriched_holdings):
-    """Persist a snapshot of the portfolio. enriched_holdings includes prices."""
     total_cost = sum(h["cost_basis"] for h in enriched_holdings)
     valued = [h for h in enriched_holdings if h.get("market_value") is not None]
     total_value = sum(h["market_value"] for h in valued) if valued else None
@@ -123,3 +129,39 @@ def get_snapshot(snapshot_id):
 def delete_snapshot(snapshot_id):
     with get_conn() as conn:
         conn.execute("DELETE FROM snapshots WHERE id=?", (snapshot_id,))
+
+
+# --- Broker profiles ---
+
+def get_all_broker_profiles():
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM broker_profiles ORDER BY broker"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_broker_profile(broker):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM broker_profiles WHERE broker=?", (broker,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_broker_profile(broker, symbol_col, shares_col, cost_col, cost_is_total):
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO broker_profiles (broker, symbol_col, shares_col, cost_col, cost_is_total)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(broker) DO UPDATE SET
+                symbol_col=excluded.symbol_col,
+                shares_col=excluded.shares_col,
+                cost_col=excluded.cost_col,
+                cost_is_total=excluded.cost_is_total
+        """, (broker, symbol_col, shares_col, cost_col, 1 if cost_is_total else 0))
+
+
+def delete_broker_profile(broker):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM broker_profiles WHERE broker=?", (broker,))
