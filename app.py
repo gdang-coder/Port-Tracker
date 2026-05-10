@@ -378,6 +378,23 @@ def add_holding():
     return jsonify({"id": holding_id})
 
 
+@app.route("/api/holding/<int:holding_id>", methods=["PUT"])
+def update_holding(holding_id):
+    data = request.get_json()
+    try:
+        symbol = data["symbol"].strip().upper()
+        shares = float(data["shares"])
+        cost = float(data["cost_per_share"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Invalid data. Need symbol, shares, cost_per_share"}), 400
+    if not symbol or shares <= 0 or cost <= 0:
+        return jsonify({"error": "Symbol required; shares and cost must be positive"}), 400
+    if not _SYMBOL_RE.match(symbol):
+        return jsonify({"error": f"Invalid ticker symbol: {symbol}"}), 400
+    db.update_holding(holding_id, symbol, shares, cost)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/holding/<int:holding_id>", methods=["DELETE"])
 def delete_holding(holding_id):
     db.delete_holding(holding_id)

@@ -93,6 +93,14 @@ def delete_holding(holding_id):
         conn.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
 
 
+def update_holding(holding_id, symbol, shares, cost_per_share):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE holdings SET symbol=?, shares=?, cost_per_share=? WHERE id=?",
+            (symbol.upper(), shares, cost_per_share, holding_id),
+        )
+
+
 def _clean_rows(rows, broker, default_account=None):
     """Validate row dicts and build (sym, shares, cost, broker, account) tuples."""
     clean = []

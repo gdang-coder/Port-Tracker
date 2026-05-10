@@ -81,19 +81,41 @@ function renderDetailed(holdings) {
       <td class="num ${gainClass(h.gain)}">${fmt(h.gain)}</td>
       <td class="num ${gainClass(h.gain_pct)}">${fmtPct(h.gain_pct)}</td>
       <td class="num muted-val" style="font-size:12px">${fmtDateShort(h.created_at)}</td>
-      <td><button class="del-btn" data-id="${h.id}" title="Remove">✕</button></td>
+      <td style="white-space:nowrap">
+        <button class="edit-btn" data-id="${h.id}"
+                data-symbol="${escHtml(h.symbol)}"
+                data-shares="${h.shares}"
+                data-cost="${h.cost_per_share}"
+                data-context="${escHtml(h.broker + (h.account ? ' · ' + h.account : ''))}"
+                title="Edit">✎</button>
+        <button class="del-btn" data-id="${h.id}" title="Remove">✕</button>
+      </td>
     </tr>
   `).join('');
-
-  tbody.querySelectorAll('.del-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Remove this holding?')) return;
-      await fetch(`/api/holding/${btn.dataset.id}`, { method: 'DELETE' });
-      loadPortfolio();
-      loadSources();
-    });
-  });
 }
+
+// Edit & delete wired via event delegation on the tbody (survives re-renders)
+document.getElementById('holdingsBody').addEventListener('click', async e => {
+  const del = e.target.closest('.del-btn[data-id]');
+  if (del && !del.classList.contains('del-acct-btn')) {
+    if (!confirm('Remove this holding?')) return;
+    await fetch(`/api/holding/${del.dataset.id}`, { method: 'DELETE' });
+    loadPortfolio();
+    loadSources();
+  }
+  const edit = e.target.closest('.edit-btn');
+  if (edit) {
+    _editId = edit.dataset.id;
+    document.getElementById('eSymbol').value  = edit.dataset.symbol;
+    document.getElementById('eShares').value  = edit.dataset.shares;
+    document.getElementById('eCost').value    = edit.dataset.cost;
+    document.getElementById('editModalContext').textContent = edit.dataset.context;
+    document.getElementById('editStatus').textContent = '';
+    document.getElementById('editModal').style.display = 'flex';
+  }
+});
+
+let _editId = null;
 
 function aggregateBySymbol(holdings) {
   const map = {};
@@ -228,7 +250,42 @@ function renderCharts(holdings) {
 let _importColumns = [];
 let _importRows = [];
 let _importBroker = '';
-let _colRoles = {};  // col name -> 'symbol'|'shares'|'cost'|null
+let _importAccount = '';
+let _importFile = null;      // File or Blob sent to preview & confirm
+let _importFileName = '';    // display name for the mapping title
+let _importMode = 'file';    // 'file' | 'paste'
+let _colRoles = {};          // col name -> 'symbol'|'shares'|'cost'|'account'|null
+
+// ── Paste helper ───────────────────────────────────────────────────────────
+
+function pasteToCSVBlob(text) {
+  if (!text.includes('\t')) return new Blob([text], { type: 'text/csv' });
+  const csv = text.split('\n').map(line =>
+    line.split('\t').map(cell => {
+      if (cell.includes(',') || cell.includes('"') || cell.includes('\n'))
+        return '"' + cell.replace(/"/g, '""') + '"';
+      return cell;
+    }).join(',')
+  ).join('\n');
+  return new Blob([csv], { type: 'text/csv' });
+}
+
+// ── Import mode toggle ─────────────────────────────────────────────────────
+
+document.getElementById('importModeFile').addEventListener('click', () => {
+  _importMode = 'file';
+  document.getElementById('importModeFile').classList.add('active');
+  document.getElementById('importModePaste').classList.remove('active');
+  document.getElementById('importFileArea').style.display = '';
+  document.getElementById('importPasteArea').style.display = 'none';
+});
+document.getElementById('importModePaste').addEventListener('click', () => {
+  _importMode = 'paste';
+  document.getElementById('importModePaste').classList.add('active');
+  document.getElementById('importModeFile').classList.remove('active');
+  document.getElementById('importFileArea').style.display = 'none';
+  document.getElementById('importPasteArea').style.display = 'block';
+});
 
 const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost', 'account'];
 const ROLE_LABEL = { symbol: 'Symbol', shares: 'Shares', cost: 'Cost', account: 'Account' };
@@ -294,38 +351,45 @@ function updateImportBtn() {
   document.getElementById('costIsTotalRow').style.display = roles.includes('cost') ? 'flex' : 'none';
 }
 
-let _importAccount = '';
-
 document.getElementById('previewBtn').addEventListener('click', async () => {
   const broker = document.getElementById('brokerName').value.trim();
   const account = document.getElementById('accountName').value.trim();
-  const file = document.getElementById('csvFile').files[0];
   const status = document.getElementById('previewStatus');
 
   if (!broker) { setStatus(status, 'Enter a broker name first', 'err'); return; }
-  if (!file)   { setStatus(status, 'Select a CSV file first', 'err'); return; }
+
+  let file, fileName;
+  if (_importMode === 'paste') {
+    const text = document.getElementById('pasteData').value.trim();
+    if (!text) { setStatus(status, 'Paste some data first', 'err'); return; }
+    file = pasteToCSVBlob(text);
+    fileName = 'pasted data';
+  } else {
+    file = document.getElementById('csvFile').files[0];
+    if (!file) { setStatus(status, 'Select a CSV file first', 'err'); return; }
+    fileName = file.name;
+  }
+  _importFile = file;
+  _importFileName = fileName;
+  _importBroker = broker;
   _importAccount = account;
 
-  setStatus(status, 'Reading file…', '');
+  setStatus(status, 'Reading…', '');
 
   const fd = new FormData();
   fd.append('broker', broker);
-  fd.append('file', file);
+  fd.append('file', _importFile, 'import.csv');
 
   const res = await fetch('/api/upload/preview', { method: 'POST', body: fd });
   const json = await res.json();
 
-  if (!res.ok) {
-    setStatus(status, json.error, 'err');
-    return;
-  }
+  if (!res.ok) { setStatus(status, json.error, 'err'); return; }
 
   setStatus(status, '', '');
   _importColumns = json.columns;
   _importRows = json.rows || [];
-  _importBroker = broker;
 
-  // Init all roles to null, then apply auto-detect / profile mapping
+  // Init roles, then apply auto-detect / profile mapping
   _colRoles = {};
   for (const col of _importColumns) _colRoles[col] = null;
   const m = json.mapping;
@@ -338,7 +402,6 @@ document.getElementById('previewBtn').addEventListener('click', async () => {
   document.getElementById('saveProfile').checked = !json.has_profile;
   document.getElementById('saveProfileBroker').textContent = `"${broker}"`;
 
-  // Profile banner
   const banner = document.getElementById('profileBanner');
   if (json.source === 'profile') {
     banner.textContent = `✓ Using saved profile for ${broker} — columns pre-assigned. Adjust if the export format changed.`;
@@ -354,11 +417,10 @@ document.getElementById('previewBtn').addEventListener('click', async () => {
 
   const colCount = json.columns.length;
   document.getElementById('mappingTitle').textContent =
-    `${file.name} — ${colCount} column${colCount !== 1 ? 's' : ''} found`;
+    `${_importFileName} — ${colCount} column${colCount !== 1 ? 's' : ''} found`;
 
   renderColumnPicker();
   updateImportBtn();
-
   document.getElementById('importStep1').style.display = 'none';
   document.getElementById('importStep2').style.display = 'block';
 });
@@ -371,7 +433,6 @@ document.getElementById('backBtn').addEventListener('click', () => {
 
 document.getElementById('confirmImportBtn').addEventListener('click', async () => {
   const status = document.getElementById('confirmStatus');
-  const file = document.getElementById('csvFile').files[0];
 
   const mapping = {
     symbol:  Object.entries(_colRoles).find(([, r]) => r === 'symbol')?.[0]  || null,
@@ -389,7 +450,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   const fd = new FormData();
   fd.append('broker', _importBroker);
   fd.append('account', _importAccount);
-  fd.append('file', file);
+  fd.append('file', _importFile, 'import.csv');
   fd.append('mapping', JSON.stringify(mapping));
   fd.append('save_profile', document.getElementById('saveProfile').checked ? 'true' : 'false');
 
@@ -413,9 +474,11 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   setStatus(status, `Imported ${json.imported} holdings for ${json.broker}`, 'ok');
   document.getElementById('importStep2').style.display = 'none';
   document.getElementById('importStep1').style.display = 'block';
+  _importFile = null;
   document.getElementById('brokerName').value = '';
   document.getElementById('accountName').value = '';
   document.getElementById('csvFile').value = '';
+  document.getElementById('pasteData').value = '';
 
   loadPortfolio();
   setTimeout(loadSnapshots, 1500);
@@ -760,6 +823,38 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', loadPortfolio);
+
+// ── Edit holding modal ─────────────────────────────────────────────────────
+
+document.getElementById('cancelEdit').addEventListener('click', () => {
+  document.getElementById('editModal').style.display = 'none';
+});
+document.getElementById('editModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+});
+
+document.getElementById('editForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const status = document.getElementById('editStatus');
+  const body = {
+    symbol: document.getElementById('eSymbol').value.trim().toUpperCase(),
+    shares: parseFloat(document.getElementById('eShares').value),
+    cost_per_share: parseFloat(document.getElementById('eCost').value),
+  };
+  setStatus(status, 'Saving…', '');
+  const res = await fetch(`/api/holding/${_editId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    setStatus(status, json.error, 'err');
+  } else {
+    document.getElementById('editModal').style.display = 'none';
+    loadPortfolio();
+  }
+});
 
 document.querySelectorAll('.toggle-btn').forEach(btn => {
   btn.addEventListener('click', () => {

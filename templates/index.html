@@ -82,9 +82,15 @@
         <h2>Import CSV</h2>
       </div>
 
-      <!-- Step 1: pick broker + file -->
+      <!-- Step 1: pick broker + file or paste -->
       <div id="importStep1">
-        <p class="hint">Enter the broker name and upload their CSV export. The app will detect the column layout automatically — you can review and save it as a profile so future imports just work.</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+          <p class="hint" style="margin:0">Enter the broker name, then upload a CSV or paste from Excel / Google Sheets.</p>
+          <div class="view-toggle">
+            <button class="toggle-btn active" id="importModeFile">Upload CSV</button>
+            <button class="toggle-btn" id="importModePaste">Paste Table</button>
+          </div>
+        </div>
         <div class="import-form">
           <div class="field">
             <label for="brokerName">Broker name</label>
@@ -94,12 +100,18 @@
             <label for="accountName">Account <span style="color:var(--muted);font-weight:400;font-size:11px">(optional)</span></label>
             <input id="accountName" type="text" placeholder="e.g. IRA, Taxable" autocomplete="off" />
           </div>
-          <div class="field">
+          <div class="field" id="importFileArea">
             <label for="csvFile">CSV file</label>
             <input id="csvFile" type="file" accept=".csv,text/csv" />
           </div>
           <button class="btn" id="previewBtn">Preview columns</button>
           <span id="previewStatus" class="status-msg"></span>
+        </div>
+        <div id="importPasteArea" style="display:none;margin-top:4px">
+          <div class="field">
+            <label for="pasteData">Paste table <span style="color:var(--muted);font-weight:400;font-size:11px">— select cells in your spreadsheet and press Ctrl+V / ⌘+V</span></label>
+            <textarea id="pasteData" rows="6" placeholder="Symbol&#9;Shares&#9;Cost&#10;AAPL&#9;10&#9;150.00&#10;MSFT&#9;5&#9;280.00"></textarea>
+          </div>
         </div>
       </div>
 
@@ -195,6 +207,34 @@
           <button type="submit" class="btn">Add</button>
         </div>
         <span id="modalStatus" class="status-msg"></span>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit holding modal -->
+  <div id="editModal" class="modal" style="display:none">
+    <div class="modal-box">
+      <h2>Edit Holding</h2>
+      <p id="editModalContext" style="font-size:12px;color:var(--muted);margin-top:-8px"></p>
+      <form id="editForm">
+        <div class="field">
+          <label>Ticker Symbol</label>
+          <input id="eSymbol" type="text" placeholder="e.g. AAPL" required autocomplete="off" />
+          <span style="font-size:11px;color:var(--muted);margin-top:3px;display:block">Correct this if the broker symbol differs from Yahoo Finance (e.g. BRK/B → BRK-B)</span>
+        </div>
+        <div class="field">
+          <label>Shares</label>
+          <input id="eShares" type="number" min="0.0001" step="any" required />
+        </div>
+        <div class="field">
+          <label>Avg Cost Per Share ($)</label>
+          <input id="eCost" type="number" min="0.0001" step="any" required />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" id="cancelEdit">Cancel</button>
+          <button type="submit" class="btn">Save changes</button>
+        </div>
+        <span id="editStatus" class="status-msg"></span>
       </form>
     </div>
   </div>
