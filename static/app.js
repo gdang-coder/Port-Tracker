@@ -6,6 +6,8 @@ const fmtPct = (n) =>
 
 const gainClass = (n) => n == null ? '' : n >= 0 ? 'gain-pos' : 'gain-neg';
 
+const fmtYield = (n) => n == null ? '—' : (n * 100).toFixed(2) + '%';
+
 const PALETTE = [
   '#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4','#a855f7',
   '#ec4899','#14b8a6','#f97316','#84cc16','#3b82f6','#e11d48',
@@ -92,12 +94,13 @@ function renderDetailed(holdings) {
       <th class="num" data-sort="market_value">Market Value ${sortArrow('market_value')}</th>
       <th class="num" data-sort="gain">Gain / Loss ${sortArrow('gain')}</th>
       <th class="num" data-sort="gain_pct">Return ${sortArrow('gain_pct')}</th>
+      <th class="num" data-sort="dividend_yield">Div Yield ${sortArrow('dividend_yield')}</th>
       <th class="num" data-sort="created_at">Updated ${sortArrow('created_at')}</th>
       <th></th>
     </tr>`;
 
   if (!holdings.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
   const sorted = sortRows(holdings, _sort.key, _sort.dir);
@@ -112,6 +115,7 @@ function renderDetailed(holdings) {
       <td class="num">${fmt(h.market_value)}</td>
       <td class="num ${gainClass(h.gain)}">${fmt(h.gain)}</td>
       <td class="num ${gainClass(h.gain_pct)}">${fmtPct(h.gain_pct)}</td>
+      <td class="num muted-val">${fmtYield(h.dividend_yield)}</td>
       <td class="num muted-val" style="font-size:12px">${fmtDateShort(h.created_at)}</td>
       <td style="white-space:nowrap">
         <button class="edit-btn" data-id="${h.id}"
@@ -157,7 +161,9 @@ function aggregateBySymbol(holdings) {
       map[k] = {
         symbol: h.symbol, shares: 0, cost_total: 0,
         market_value: 0, has_value: false,
-        current_price: h.current_price, locations: [],
+        current_price: h.current_price,
+        dividend_yield: h.dividend_yield,
+        locations: [],
         last_updated: '',
       };
     }
@@ -166,6 +172,7 @@ function aggregateBySymbol(holdings) {
     a.cost_total += h.cost_basis;
     if (h.market_value != null) { a.market_value += h.market_value; a.has_value = true; }
     a.current_price = h.current_price;
+    a.dividend_yield = h.dividend_yield;
     if (h.created_at && h.created_at > a.last_updated) a.last_updated = h.created_at;
     const loc = h.account ? `${h.broker} · ${h.account}` : h.broker;
     a.locations.push({ loc, shares: h.shares });
@@ -193,11 +200,12 @@ function renderCombined(holdings) {
       <th class="num" data-sort="market_value">Market Value ${sortArrow('market_value')}</th>
       <th class="num" data-sort="gain">Gain / Loss ${sortArrow('gain')}</th>
       <th class="num" data-sort="gain_pct">Return ${sortArrow('gain_pct')}</th>
+      <th class="num" data-sort="dividend_yield">Div Yield ${sortArrow('dividend_yield')}</th>
       <th class="num" data-sort="last_updated">Updated ${sortArrow('last_updated')}</th>
     </tr>`;
 
   if (!holdings.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
 
@@ -216,6 +224,7 @@ function renderCombined(holdings) {
         <td class="num">${fmt(r.market_value)}</td>
         <td class="num ${gainClass(r.gain)}">${fmt(r.gain)}</td>
         <td class="num ${gainClass(r.gain_pct)}">${fmtPct(r.gain_pct)}</td>
+        <td class="num muted-val">${fmtYield(r.dividend_yield)}</td>
         <td class="num muted-val" style="font-size:12px">${fmtDateShort(r.last_updated)}</td>
       </tr>`;
   }).join('');

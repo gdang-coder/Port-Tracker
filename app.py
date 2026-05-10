@@ -206,6 +206,7 @@ def enrich_holdings(holdings):
 
     symbols = list({h["symbol"] for h in holdings})
     current_prices = prices.get_prices(symbols)
+    div_yields = prices.get_dividend_yields(symbols)
 
     enriched = []
     total_value = 0.0
@@ -225,6 +226,7 @@ def enrich_holdings(holdings):
             "cost_basis": cost_basis,
             "gain": gain,
             "gain_pct": gain_pct,
+            "dividend_yield": div_yields.get(h["symbol"]),
         })
         total_cost += cost_basis
         if market_value is not None:

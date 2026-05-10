@@ -10,6 +10,10 @@ _cache: dict[str, tuple[float | None, float]] = {}
 SUCCESS_TTL = 300  # cache valid prices for 5 min
 FAIL_TTL = 60      # only cache failures for 1 min so we retry quickly
 
+# symbol -> (yield_or_None, fetched_at)
+_yield_cache: dict[str, tuple[float | None, float]] = {}
+YIELD_TTL = 86400  # 24 h — dividends change rarely
+
 
 def _is_stale(sym: str, now: float) -> bool:
     if sym not in _cache:
@@ -65,3 +69,22 @@ def get_prices(symbols: list[str]) -> dict[str, float | None]:
                 _cache[sym] = (None, now)
 
     return {sym: _cache.get(sym, (None, 0))[0] for sym in symbols}
+
+
+def get_dividend_yields(symbols: list[str]) -> dict[str, float | None]:
+    if not symbols:
+        return {}
+
+    now = time.time()
+    stale = sorted({s for s in symbols if s not in _yield_cache or now - _yield_cache[s][1] > YIELD_TTL})
+
+    for sym in stale:
+        try:
+            info = yf.Ticker(sym).info
+            raw = info.get('dividendYield')
+            val = float(raw) if raw is not None else None
+        except Exception:
+            val = None
+        _yield_cache[sym] = (val, now)
+
+    return {sym: _yield_cache.get(sym, (None, 0))[0] for sym in symbols}
