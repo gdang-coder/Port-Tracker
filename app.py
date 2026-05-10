@@ -1,7 +1,8 @@
 import io
-import csv
+import re
 import json
 import threading
+import pandas as pd
 from flask import Flask, jsonify, request, render_template
 import db
 import prices
@@ -9,156 +10,175 @@ import prices
 app = Flask(__name__)
 db.init_db()
 
-# At least one of these must appear for a row to be treated as a header
-_CRITICAL_HEADER_WORDS = {'symbol', 'ticker', 'stock', 'security', 'shares', 'quantity', 'qty', 'units', 'cusip'}
-# Supporting words that, combined with a critical word, confirm it's a header row
-_HEADER_WORDS = _CRITICAL_HEADER_WORDS | {
-    'cost', 'price', 'value', 'description', 'type',
-    'gain', 'loss', 'percent', 'basis', 'average', 'market', 'current',
-    'total', 'today', 'change', 'action',
+# ─────────────────────────────────────────────────────────────────────────────
+# CSV import — robust pandas-based parser
+# ─────────────────────────────────────────────────────────────────────────────
+
+# A line counts as a header only if it contains one of these "critical" words.
+_CRITICAL_HEADER_WORDS = {
+    'symbol', 'ticker', 'stock', 'security',
+    'shares', 'quantity', 'qty', 'units', 'cusip',
 }
 
-# Maps normalised column names to semantic roles
+# Maps normalised column names to a semantic role.
 _COL_ALIASES = {
     # symbol
-    "ticker": "symbol",
-    "stock": "symbol",
-    "security": "symbol",
+    'ticker': 'symbol', 'stock': 'symbol', 'security': 'symbol',
+    'symbol': 'symbol',
     # shares
-    "qty": "shares",
-    "quantity": "shares",
-    "units": "shares",
+    'qty': 'shares', 'quantity': 'shares', 'units': 'shares',
+    'shares': 'shares',
     # per-share cost
-    "avg cost": "cost",
-    "avg_cost": "cost",
-    "cost per share": "cost",
-    "cost_per_share": "cost",
-    "average cost": "cost",
-    "average cost basis": "cost",
-    "price paid": "cost",
-    "purchase price": "cost",
-    "unit cost": "cost",
-    "book cost per share": "cost",
+    'cost': 'cost',
+    'avg cost': 'cost', 'avg_cost': 'cost',
+    'cost per share': 'cost', 'cost_per_share': 'cost',
+    'average cost': 'cost', 'average cost basis': 'cost',
+    'price paid': 'cost', 'purchase price': 'cost',
+    'unit cost': 'cost', 'book cost per share': 'cost',
     # total cost (will be divided by shares)
-    "cost basis": "cost_total",
-    "cost_basis": "cost_total",
-    "total cost": "cost_total",
-    "total cost basis": "cost_total",
-    "cost basis total": "cost_total",
-    "book value": "cost_total",
-    "book cost": "cost_total",
-    "amount paid": "cost_total",
+    'cost basis': 'cost_total', 'cost_basis': 'cost_total',
+    'total cost': 'cost_total', 'total cost basis': 'cost_total',
+    'cost basis total': 'cost_total',
+    'book value': 'cost_total', 'book cost': 'cost_total',
+    'amount paid': 'cost_total',
 }
 
+# Strict ticker symbol: 1-10 chars, uppercase letters/digits, optional . or -
+# This filters out junk like "Account Total", "Cash & Money Market", "--"
+_SYMBOL_RE = re.compile(r'^[A-Z][A-Z0-9.\-]{0,9}$')
 
-def _norm(s: str) -> str:
-    return s.strip().lower()
+
+def _norm(s) -> str:
+    return str(s or '').strip().lower()
 
 
 def _parse_num(s) -> float:
+    """Parse a numeric cell, tolerating $, commas, %, parens for negatives."""
     if s is None:
         return 0.0
-    return float(
-        str(s).strip().replace(",", "").replace("$", "")
-              .replace("(", "-").replace(")", "").replace("%", "") or "0"
+    cleaned = (
+        str(s).strip()
+              .replace(',', '').replace('$', '')
+              .replace('%', '').replace(' ', '')
     )
+    if not cleaned or cleaned in {'-', '--', 'N/A', 'NA'}:
+        return 0.0
+    if cleaned.startswith('(') and cleaned.endswith(')'):
+        cleaned = '-' + cleaned[1:-1]
+    return float(cleaned)
 
 
-def _find_header_row(text: str) -> str:
-    """
-    Scan lines top-to-bottom and return the CSV text starting from the
-    first line that looks like a real data header. A valid header must:
-    - contain at least one critical column word (symbol, shares, quantity…)
-    - contain at least 2 total header-word matches across its cells
-    Falls back to the full text if nothing found.
-    """
+def _find_header_row_index(text: str) -> int:
+    """Find the line index of the actual data header (skipping preamble)."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if not line.strip():
-            continue
         cells = [c.strip().strip('"').lower() for c in line.split(',')]
-        has_critical = any(
-            any(crit == cell or cell.startswith(crit) for crit in _CRITICAL_HEADER_WORDS)
-            for cell in cells
-        )
-        if not has_critical:
-            continue
-        total_matches = sum(1 for c in cells if any(w in c for w in _HEADER_WORDS))
-        if total_matches >= 2:
-            return "\n".join(lines[i:])
-    return text
+        for cell in cells:
+            for word in _CRITICAL_HEADER_WORDS:
+                # exact match, or word followed by space/underscore (e.g. "symbol description")
+                if cell == word or cell.startswith(word + ' ') or cell.startswith(word + '_'):
+                    return i
+    return 0
+
+
+def _read_csv(file_bytes: bytes) -> pd.DataFrame:
+    """Decode and parse the file into a DataFrame, auto-skipping any preamble."""
+    text = file_bytes.decode('utf-8-sig', errors='replace')
+    skip = _find_header_row_index(text)
+    df = pd.read_csv(
+        io.StringIO(text),
+        skiprows=skip,
+        dtype=str,
+        keep_default_na=False,
+        on_bad_lines='skip',
+        engine='python',
+    )
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, [c for c in df.columns if c]]  # drop blank-named columns
+    return df
 
 
 def _detect_mapping(columns: list[str]) -> dict:
-    """Auto-detect column roles from actual column names in the file."""
-    mapping = {"symbol": None, "shares": None, "cost": None, "cost_is_total": False}
+    """Pick the best symbol/shares/cost columns from a list of column names.
+
+    Prefers per-share cost columns over total-cost columns when both exist.
+    """
+    sym, shr, ps_cost, total_cost = [], [], [], []
     for col in columns:
-        role = _COL_ALIASES.get(_norm(col), _norm(col))
-        if role == "symbol" and not mapping["symbol"]:
-            mapping["symbol"] = col
-        elif role == "shares" and not mapping["shares"]:
-            mapping["shares"] = col
-        elif role == "cost" and not mapping["cost"]:
-            mapping["cost"] = col
-            mapping["cost_is_total"] = False
-        elif role == "cost_total" and not mapping["cost"]:
-            mapping["cost"] = col
-            mapping["cost_is_total"] = True
-        # Also catch plain "symbol", "shares", "cost" column names
-        elif _norm(col) == "symbol" and not mapping["symbol"]:
-            mapping["symbol"] = col
-        elif _norm(col) == "shares" and not mapping["shares"]:
-            mapping["shares"] = col
-        elif _norm(col) == "cost" and not mapping["cost"]:
-            mapping["cost"] = col
-            mapping["cost_is_total"] = False
+        role = _COL_ALIASES.get(_norm(col))
+        if role == 'symbol':
+            sym.append(col)
+        elif role == 'shares':
+            shr.append(col)
+        elif role == 'cost':
+            ps_cost.append(col)
+        elif role == 'cost_total':
+            total_cost.append(col)
+
+    mapping = {'symbol': None, 'shares': None, 'cost': None, 'cost_is_total': False}
+    if sym:
+        mapping['symbol'] = sym[0]
+    if shr:
+        mapping['shares'] = shr[0]
+    if ps_cost:
+        mapping['cost'] = ps_cost[0]
+        mapping['cost_is_total'] = False
+    elif total_cost:
+        mapping['cost'] = total_cost[0]
+        mapping['cost_is_total'] = True
     return mapping
 
 
 def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
-    """Parse a CSV file using an explicit column mapping."""
-    text = file_bytes.decode("utf-8-sig").strip()
-    csv_text = _find_header_row(text)
-    reader = csv.DictReader(io.StringIO(csv_text))
-    columns = list(reader.fieldnames or [])
+    """Parse a CSV using an explicit column mapping. Returns valid holdings."""
+    df = _read_csv(file_bytes)
+    columns = list(df.columns)
 
-    symbol_col = mapping.get("symbol")
-    shares_col = mapping.get("shares")
-    cost_col = mapping.get("cost")
-    cost_is_total = mapping.get("cost_is_total", False)
+    sym_col = mapping.get('symbol')
+    shr_col = mapping.get('shares')
+    cost_col = mapping.get('cost')
+    cost_is_total = bool(mapping.get('cost_is_total'))
 
-    missing = [name for name, col in [("symbol", symbol_col), ("shares", shares_col), ("cost", cost_col)] if not col]
+    if not (sym_col and shr_col and cost_col):
+        raise ValueError("Symbol, shares, and cost columns must all be selected.")
+
+    missing = [c for c in [sym_col, shr_col, cost_col] if c not in columns]
     if missing:
-        raise ValueError(f"Missing column mapping for: {', '.join(missing)}")
-
-    # Validate the mapped columns actually exist
-    col_set = set(columns)
-    bad = [col for col in [symbol_col, shares_col, cost_col] if col not in col_set]
-    if bad:
-        raise ValueError(f"Columns not found in file: {', '.join(bad)}. Available: {', '.join(columns)}")
+        raise ValueError(
+            f"Column(s) not in file: {', '.join(missing)}. "
+            f"Available columns: {', '.join(columns)}"
+        )
 
     rows = []
-    for i, row in enumerate(reader, start=2):
-        sym = row.get(symbol_col, "").strip().upper()
-        if not sym or sym.startswith("--") or sym.lower() in {"pending", "n/a", ""}:
+    for _, r in df.iterrows():
+        sym = str(r.get(sym_col, '') or '').strip().upper()
+        if not _SYMBOL_RE.match(sym):
+            continue  # skip cash, totals, blank rows, etc.
+        try:
+            shares = _parse_num(r.get(shr_col))
+            cost_raw = _parse_num(r.get(cost_col))
+        except (ValueError, TypeError):
+            continue
+        if shares <= 0 or cost_raw <= 0:
             continue
         try:
-            shares = _parse_num(row.get(shares_col))
-            cost_raw = _parse_num(row.get(cost_col))
-        except (ValueError, ZeroDivisionError):
-            continue  # skip unparseable rows (totals rows, etc.)
-
-        if shares <= 0 or cost_raw <= 0:
-            continue  # skip zero/negative rows (cash positions, pending, etc.)
-
-        cost_per_share = cost_raw / shares if cost_is_total else cost_raw
-        if cost_per_share <= 0:
+            cost_per_share = cost_raw / shares if cost_is_total else cost_raw
+        except ZeroDivisionError:
             continue
-
-        rows.append({"symbol": sym, "shares": shares, "cost_per_share": cost_per_share})
+        if cost_per_share <= 0 or cost_per_share > 1e7:
+            continue  # sanity check
+        rows.append({
+            'symbol': sym,
+            'shares': shares,
+            'cost_per_share': cost_per_share,
+        })
 
     if not rows:
-        raise ValueError("No valid holdings rows found with the selected columns. Check that the right columns are mapped.")
+        raise ValueError(
+            "No valid holdings found. Check the column mapping and the "
+            "'cost is total' setting. (Cash positions, summary rows, and "
+            "non-ticker symbols are skipped automatically.)"
+        )
     return rows
 
 
@@ -228,11 +248,11 @@ def upload_preview():
         return jsonify({"error": "No file uploaded"}), 400
 
     file_bytes = file.read()
-    text = file_bytes.decode("utf-8-sig").strip()
-    csv_text = _find_header_row(text)
-
-    reader = csv.DictReader(io.StringIO(csv_text))
-    columns = [c for c in (reader.fieldnames or []) if c and c.strip()]
+    try:
+        df = _read_csv(file_bytes)
+    except Exception as e:
+        return jsonify({"error": f"Could not read CSV: {e}"}), 400
+    columns = list(df.columns)
 
     if not columns:
         return jsonify({"error": "No columns found. Is this a valid CSV file?"}), 400
