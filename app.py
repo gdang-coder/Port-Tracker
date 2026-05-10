@@ -296,6 +296,7 @@ def upload_preview():
 def upload_confirm():
     """Step 2: import with a confirmed column mapping, optionally save profile."""
     broker = request.form.get("broker", "").strip()
+    account = request.form.get("account", "").strip()
     if not broker:
         return jsonify({"error": "Broker name is required"}), 400
     file = request.files.get("file")
@@ -315,7 +316,7 @@ def upload_confirm():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    db.replace_broker_holdings(broker, rows)
+    db.replace_account_holdings(broker, account, rows)
 
     if save_profile:
         db.save_broker_profile(
@@ -327,11 +328,11 @@ def upload_confirm():
         )
 
     # Snapshot the new state in the background so the request returns fast.
-    # Live prices may take several seconds to fetch; we don't make the user wait.
-    label = f"{broker} import · {len(rows)} holdings"
+    where = f"{broker} · {account}" if account else broker
+    label = f"{where} import · {len(rows)} holdings"
     threading.Thread(target=_snapshot_async, args=(label,), daemon=True).start()
 
-    return jsonify({"imported": len(rows), "broker": broker})
+    return jsonify({"imported": len(rows), "broker": broker, "account": account})
 
 
 def _snapshot_async(label: str):
@@ -351,11 +352,12 @@ def add_holding():
         shares = float(data["shares"])
         cost = float(data["cost_per_share"])
         broker = data["broker"].strip()
+        account = (data.get("account") or "").strip()
     except (KeyError, TypeError, ValueError):
         return jsonify({"error": "Invalid data. Need symbol, shares, cost_per_share, broker"}), 400
     if not symbol or not broker or shares <= 0 or cost <= 0:
         return jsonify({"error": "All fields required; shares and cost must be positive"}), 400
-    holding_id = db.upsert_holding(symbol, shares, cost, broker)
+    holding_id = db.upsert_holding(symbol, shares, cost, broker, account)
     return jsonify({"id": holding_id})
 
 

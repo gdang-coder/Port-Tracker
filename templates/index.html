@@ -50,25 +50,19 @@
     <section class="table-section">
       <div class="table-header">
         <h2>Holdings</h2>
-        <button class="btn" id="addHoldingBtn">+ Add Holding</button>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <div class="view-toggle">
+            <button class="toggle-btn active" data-view="detailed">By Account</button>
+            <button class="toggle-btn" data-view="combined">Combined</button>
+          </div>
+          <button class="btn" id="addHoldingBtn">+ Add Holding</button>
+        </div>
       </div>
       <div id="tableWrap">
         <table id="holdingsTable">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Broker</th>
-              <th class="num">Shares</th>
-              <th class="num">Avg Cost</th>
-              <th class="num">Current Price</th>
-              <th class="num">Market Value</th>
-              <th class="num">Gain / Loss</th>
-              <th class="num">Return</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead id="holdingsHead"></thead>
           <tbody id="holdingsBody">
-            <tr id="emptyRow"><td colspan="9" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>
+            <tr><td class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>
           </tbody>
         </table>
       </div>
@@ -87,6 +81,10 @@
           <div class="field">
             <label for="brokerName">Broker name</label>
             <input id="brokerName" type="text" placeholder="e.g. Fidelity" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="accountName">Account <span style="color:var(--muted);font-weight:400;font-size:11px">(optional)</span></label>
+            <input id="accountName" type="text" placeholder="e.g. IRA, Taxable" autocomplete="off" />
           </div>
           <div class="field">
             <label for="csvFile">CSV file</label>
@@ -171,6 +169,10 @@
         <div class="field">
           <label>Broker</label>
           <input id="mBroker" type="text" placeholder="e.g. Schwab" required />
+        </div>
+        <div class="field">
+          <label>Account <span style="color:var(--muted);font-weight:400;font-size:11px">(optional)</span></label>
+          <input id="mAccount" type="text" placeholder="e.g. IRA, Taxable" />
         </div>
         <div class="field">
           <label>Shares</label>

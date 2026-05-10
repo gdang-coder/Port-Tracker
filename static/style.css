@@ -513,6 +513,27 @@ input[type="file"] { padding: 6px 10px; cursor: pointer; }
 
 p.empty { color: var(--muted); padding: 32px; text-align: center; }
 
+/* View toggle */
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.toggle-btn {
+  padding: 7px 14px;
+  background: var(--bg);
+  color: var(--muted);
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.toggle-btn:not(:last-child) { border-right: 1px solid var(--border); }
+.toggle-btn:hover { color: var(--text); }
+.toggle-btn.active { background: var(--accent); color: #fff; }
+
 /* Visual column picker */
 .col-picker-table {
   width: 100%;

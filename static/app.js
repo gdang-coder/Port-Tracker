@@ -14,6 +14,8 @@ const PALETTE = [
 let allocationChart = null;
 let brokerChart = null;
 let timelineChart = null;
+let _viewMode = 'detailed';   // 'detailed' | 'combined'
+let _lastHoldings = [];
 
 // ── Portfolio ──────────────────────────────────────────────────────────────
 
@@ -39,15 +41,38 @@ function renderSummary(s) {
 }
 
 function renderTable(holdings) {
+  _lastHoldings = holdings;
+  if (_viewMode === 'combined') return renderCombined(holdings);
+  return renderDetailed(holdings);
+}
+
+function renderDetailed(holdings) {
+  const head = document.getElementById('holdingsHead');
   const tbody = document.getElementById('holdingsBody');
+
+  head.innerHTML = `
+    <tr>
+      <th>Symbol</th>
+      <th>Broker</th>
+      <th>Account</th>
+      <th class="num">Shares</th>
+      <th class="num">Avg Cost</th>
+      <th class="num">Current Price</th>
+      <th class="num">Market Value</th>
+      <th class="num">Gain / Loss</th>
+      <th class="num">Return</th>
+      <th></th>
+    </tr>`;
+
   if (!holdings.length) {
-    tbody.innerHTML = '<tr id="emptyRow"><td colspan="9" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
   tbody.innerHTML = holdings.map(h => `
     <tr>
       <td class="symbol">${h.symbol}</td>
       <td><span class="broker-badge">${escHtml(h.broker)}</span></td>
+      <td>${h.account ? escHtml(h.account) : '<span class="muted-val">—</span>'}</td>
       <td class="num">${h.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
       <td class="num">${fmt(h.cost_per_share)}</td>
       <td class="num ${h.current_price == null ? 'muted-val' : ''}">${fmt(h.current_price)}</td>
@@ -65,6 +90,74 @@ function renderTable(holdings) {
       loadPortfolio();
     });
   });
+}
+
+function aggregateBySymbol(holdings) {
+  const map = {};
+  for (const h of holdings) {
+    const k = h.symbol;
+    if (!map[k]) {
+      map[k] = {
+        symbol: h.symbol, shares: 0, cost_total: 0,
+        market_value: 0, has_value: false,
+        current_price: h.current_price, locations: [],
+      };
+    }
+    const a = map[k];
+    a.shares += h.shares;
+    a.cost_total += h.cost_basis;
+    if (h.market_value != null) { a.market_value += h.market_value; a.has_value = true; }
+    a.current_price = h.current_price;  // same per symbol
+    const loc = h.account ? `${h.broker} · ${h.account}` : h.broker;
+    a.locations.push({ loc, shares: h.shares });
+  }
+  return Object.values(map).map(a => {
+    const cost_per_share = a.shares > 0 ? a.cost_total / a.shares : 0;
+    const market_value = a.has_value ? a.market_value : null;
+    const gain = market_value != null ? market_value - a.cost_total : null;
+    const gain_pct = gain != null && a.cost_total > 0 ? gain / a.cost_total * 100 : null;
+    return { ...a, cost_per_share, market_value, gain, gain_pct };
+  }).sort((x, y) => x.symbol.localeCompare(y.symbol));
+}
+
+function renderCombined(holdings) {
+  const head = document.getElementById('holdingsHead');
+  const tbody = document.getElementById('holdingsBody');
+
+  head.innerHTML = `
+    <tr>
+      <th>Symbol</th>
+      <th>Held In</th>
+      <th class="num">Total Shares</th>
+      <th class="num">Avg Cost</th>
+      <th class="num">Current Price</th>
+      <th class="num">Market Value</th>
+      <th class="num">Gain / Loss</th>
+      <th class="num">Return</th>
+    </tr>`;
+
+  if (!holdings.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    return;
+  }
+
+  const rows = aggregateBySymbol(holdings);
+  tbody.innerHTML = rows.map(r => {
+    const locText = r.locations.map(l =>
+      `${escHtml(l.loc)} (${l.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })})`
+    ).join(', ');
+    return `
+      <tr>
+        <td class="symbol">${r.symbol}</td>
+        <td style="font-size:12px;color:var(--muted);white-space:normal">${locText}</td>
+        <td class="num">${r.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+        <td class="num">${fmt(r.cost_per_share)}</td>
+        <td class="num ${r.current_price == null ? 'muted-val' : ''}">${fmt(r.current_price)}</td>
+        <td class="num">${fmt(r.market_value)}</td>
+        <td class="num ${gainClass(r.gain)}">${fmt(r.gain)}</td>
+        <td class="num ${gainClass(r.gain_pct)}">${fmtPct(r.gain_pct)}</td>
+      </tr>`;
+  }).join('');
 }
 
 function renderCharts(holdings) {
@@ -193,13 +286,17 @@ function updateImportBtn() {
   document.getElementById('costIsTotalRow').style.display = roles.includes('cost') ? 'flex' : 'none';
 }
 
+let _importAccount = '';
+
 document.getElementById('previewBtn').addEventListener('click', async () => {
   const broker = document.getElementById('brokerName').value.trim();
+  const account = document.getElementById('accountName').value.trim();
   const file = document.getElementById('csvFile').files[0];
   const status = document.getElementById('previewStatus');
 
   if (!broker) { setStatus(status, 'Enter a broker name first', 'err'); return; }
   if (!file)   { setStatus(status, 'Select a CSV file first', 'err'); return; }
+  _importAccount = account;
 
   setStatus(status, 'Reading file…', '');
 
@@ -281,6 +378,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
 
   const fd = new FormData();
   fd.append('broker', _importBroker);
+  fd.append('account', _importAccount);
   fd.append('file', file);
   fd.append('mapping', JSON.stringify(mapping));
   fd.append('save_profile', document.getElementById('saveProfile').checked ? 'true' : 'false');
@@ -306,6 +404,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   document.getElementById('importStep2').style.display = 'none';
   document.getElementById('importStep1').style.display = 'block';
   document.getElementById('brokerName').value = '';
+  document.getElementById('accountName').value = '';
   document.getElementById('csvFile').value = '';
 
   loadPortfolio();
@@ -481,7 +580,7 @@ function buildSnapshotTable(holdings) {
       <table class="snap-table">
         <thead>
           <tr>
-            <th>Symbol</th><th>Broker</th>
+            <th>Symbol</th><th>Broker</th><th>Account</th>
             <th class="num">Shares</th><th class="num">Avg Cost</th>
             <th class="num">Price at Snapshot</th><th class="num">Value</th>
             <th class="num">Gain / Loss</th><th class="num">Return</th>
@@ -492,6 +591,7 @@ function buildSnapshotTable(holdings) {
             <tr>
               <td class="symbol">${h.symbol}</td>
               <td><span class="broker-badge">${escHtml(h.broker)}</span></td>
+              <td>${h.account ? escHtml(h.account) : '<span class="muted-val">—</span>'}</td>
               <td class="num">${h.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
               <td class="num">${fmt(h.cost_per_share)}</td>
               <td class="num ${h.current_price == null ? 'muted-val' : ''}">${fmt(h.current_price)}</td>
@@ -559,6 +659,7 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
   const body = {
     symbol: document.getElementById('mSymbol').value,
     broker: document.getElementById('mBroker').value,
+    account: document.getElementById('mAccount').value,
     shares: parseFloat(document.getElementById('mShares').value),
     cost_per_share: parseFloat(document.getElementById('mCost').value),
   };
@@ -579,6 +680,16 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', loadPortfolio);
+
+document.querySelectorAll('.toggle-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _viewMode = btn.dataset.view;
+    document.querySelectorAll('.toggle-btn').forEach(b =>
+      b.classList.toggle('active', b === btn)
+    );
+    renderTable(_lastHoldings);
+  });
+});
 
 // Initial load
 loadPortfolio();

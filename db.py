@@ -21,9 +21,14 @@ def init_db():
                 shares REAL NOT NULL,
                 cost_per_share REAL NOT NULL,
                 broker TEXT NOT NULL,
+                account TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Migration: add 'account' column on existing DBs
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(holdings)").fetchall()}
+        if 'account' not in cols:
+            conn.execute("ALTER TABLE holdings ADD COLUMN account TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,16 +54,16 @@ def init_db():
 def get_all_holdings():
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM holdings ORDER BY broker, symbol"
+            "SELECT * FROM holdings ORDER BY broker, account, symbol"
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def upsert_holding(symbol, shares, cost_per_share, broker):
+def upsert_holding(symbol, shares, cost_per_share, broker, account=''):
     with get_conn() as conn:
         existing = conn.execute(
-            "SELECT id, shares, cost_per_share FROM holdings WHERE symbol=? AND broker=?",
-            (symbol.upper(), broker),
+            "SELECT id, shares, cost_per_share FROM holdings WHERE symbol=? AND broker=? AND account=?",
+            (symbol.upper(), broker, account),
         ).fetchone()
         if existing:
             old_shares = existing["shares"]
@@ -72,8 +77,8 @@ def upsert_holding(symbol, shares, cost_per_share, broker):
             return existing["id"]
         else:
             cur = conn.execute(
-                "INSERT INTO holdings (symbol, shares, cost_per_share, broker) VALUES (?,?,?,?)",
-                (symbol.upper(), shares, cost_per_share, broker),
+                "INSERT INTO holdings (symbol, shares, cost_per_share, broker, account) VALUES (?,?,?,?,?)",
+                (symbol.upper(), shares, cost_per_share, broker, account),
             )
             return cur.lastrowid
 
@@ -83,7 +88,7 @@ def delete_holding(holding_id):
         conn.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
 
 
-def replace_broker_holdings(broker, rows):
+def replace_account_holdings(broker, account, rows):
     clean = []
     for r in rows:
         sym = (r.get("symbol") or "").strip().upper()
@@ -96,13 +101,13 @@ def replace_broker_holdings(broker, rows):
             continue
         if shares <= 0 or cost <= 0:
             continue
-        clean.append((sym, shares, cost, broker))
+        clean.append((sym, shares, cost, broker, account))
 
     with get_conn() as conn:
-        conn.execute("DELETE FROM holdings WHERE broker=?", (broker,))
+        conn.execute("DELETE FROM holdings WHERE broker=? AND account=?", (broker, account))
         if clean:
             conn.executemany(
-                "INSERT INTO holdings (symbol, shares, cost_per_share, broker) VALUES (?,?,?,?)",
+                "INSERT INTO holdings (symbol, shares, cost_per_share, broker, account) VALUES (?,?,?,?,?)",
                 clean,
             )
 
