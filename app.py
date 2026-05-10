@@ -1,6 +1,7 @@
 import io
 import csv
 import json
+import threading
 from flask import Flask, jsonify, request, render_template
 import db
 import prices
@@ -290,11 +291,21 @@ def upload_confirm():
             mapping.get("cost_is_total", False),
         )
 
-    all_holdings = db.get_all_holdings()
-    enriched, _ = enrich_holdings(all_holdings)
-    db.save_snapshot(f"{broker} import · {len(rows)} holdings", enriched)
+    # Snapshot the new state in the background so the request returns fast.
+    # Live prices may take several seconds to fetch; we don't make the user wait.
+    label = f"{broker} import · {len(rows)} holdings"
+    threading.Thread(target=_snapshot_async, args=(label,), daemon=True).start()
 
     return jsonify({"imported": len(rows), "broker": broker})
+
+
+def _snapshot_async(label: str):
+    try:
+        all_holdings = db.get_all_holdings()
+        enriched, _ = enrich_holdings(all_holdings)
+        db.save_snapshot(label, enriched)
+    except Exception as e:
+        print(f"Background snapshot failed: {e}")
 
 
 @app.route("/api/holding", methods=["POST"])

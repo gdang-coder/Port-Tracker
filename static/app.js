@@ -223,11 +223,19 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   fd.append('save_profile', document.getElementById('saveProfile').checked ? 'true' : 'false');
 
   setStatus(status, 'Importing…', '');
-  const res = await fetch('/api/upload/confirm', { method: 'POST', body: fd });
-  const json = await res.json();
+  let res, json;
+  try {
+    res = await fetch('/api/upload/confirm', { method: 'POST', body: fd });
+    const text = await res.text();
+    try { json = JSON.parse(text); }
+    catch { throw new Error('Server returned: ' + text.slice(0, 200)); }
+  } catch (err) {
+    setStatus(status, 'Import failed: ' + err.message, 'err');
+    return;
+  }
 
   if (!res.ok) {
-    setStatus(status, json.error, 'err');
+    setStatus(status, json.error || 'Import failed', 'err');
     return;
   }
 
@@ -238,7 +246,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   document.getElementById('csvFile').value = '';
 
   loadPortfolio();
-  loadSnapshots();
+  setTimeout(loadSnapshots, 1500);  // give background snapshot time to finish
   loadProfiles();
 });
 
