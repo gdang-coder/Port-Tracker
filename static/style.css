@@ -173,6 +173,56 @@ td.empty { text-align: center; color: var(--muted); padding: 40px; }
 }
 .del-btn:hover { color: var(--red); background: rgba(239,68,68,0.1); }
 
+/* Imported Sources */
+.sources-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+#sourcesList { padding: 8px 0; }
+
+.broker-group { border-bottom: 1px solid var(--border); }
+.broker-group:last-child { border-bottom: none; }
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  flex-wrap: wrap;
+}
+
+.source-row.broker-header {
+  background: rgba(99,102,241,0.05);
+}
+
+.source-broker {
+  font-weight: 700;
+  font-size: 14px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.source-row.source-account {
+  padding-left: 40px;
+  font-size: 13px;
+}
+
+.source-acct {
+  flex: 1;
+  min-width: 100px;
+  font-weight: 500;
+}
+
+.source-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.del-acct-btn { font-size: 14px; }
+
 /* Import section */
 .import-section {
   background: var(--surface);
@@ -589,10 +639,14 @@ p.empty { color: var(--muted); padding: 32px; text-align: center; }
   text-align-last: center;
 }
 
-.col-role-select.role-symbol { background: rgba(99,102,241,0.22); color: #a5b4fc; border-color: rgba(99,102,241,0.4); }
-.col-role-select.role-shares { background: rgba(34,197,94,0.22);  color: #86efac; border-color: rgba(34,197,94,0.4); }
-.col-role-select.role-cost   { background: rgba(245,158,11,0.22); color: #fcd34d; border-color: rgba(245,158,11,0.4); }
-.col-role-select.role-none   { color: var(--muted); }
+.col-role-select.role-symbol  { background: rgba(99,102,241,0.22);  color: #a5b4fc; border-color: rgba(99,102,241,0.4); }
+.col-role-select.role-shares  { background: rgba(34,197,94,0.22);   color: #86efac; border-color: rgba(34,197,94,0.4); }
+.col-role-select.role-cost    { background: rgba(245,158,11,0.22);  color: #fcd34d; border-color: rgba(245,158,11,0.4); }
+.col-role-select.role-account { background: rgba(6,182,212,0.22);   color: #67e8f9; border-color: rgba(6,182,212,0.4); }
+.col-role-select.role-none    { color: var(--muted); }
+
+.col-picker-table th.th-account { background: rgba(6,182,212,0.11); }
+.col-picker-table td.col-account { color: #67e8f9; background: rgba(6,182,212,0.04); }
 .col-role-select option { background: var(--surface); color: var(--text); }
 
 .col-picker-table td {

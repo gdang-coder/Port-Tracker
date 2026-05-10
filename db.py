@@ -46,9 +46,14 @@ def init_db():
                 symbol_col TEXT NOT NULL,
                 shares_col TEXT NOT NULL,
                 cost_col TEXT NOT NULL,
-                cost_is_total INTEGER NOT NULL DEFAULT 0
+                cost_is_total INTEGER NOT NULL DEFAULT 0,
+                account_col TEXT NOT NULL DEFAULT ''
             )
         """)
+        # Migration: add account_col on existing DBs
+        prof_cols = {row[1] for row in conn.execute("PRAGMA table_info(broker_profiles)").fetchall()}
+        if 'account_col' not in prof_cols:
+            conn.execute("ALTER TABLE broker_profiles ADD COLUMN account_col TEXT NOT NULL DEFAULT ''")
 
 
 def get_all_holdings():
@@ -88,7 +93,8 @@ def delete_holding(holding_id):
         conn.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
 
 
-def replace_account_holdings(broker, account, rows):
+def _clean_rows(rows, broker, default_account=None):
+    """Validate row dicts and build (sym, shares, cost, broker, account) tuples."""
     clean = []
     for r in rows:
         sym = (r.get("symbol") or "").strip().upper()
@@ -101,8 +107,28 @@ def replace_account_holdings(broker, account, rows):
             continue
         if shares <= 0 or cost <= 0:
             continue
+        account = r.get("account", default_account) if default_account is not None or "account" in r else default_account
+        if account is None:
+            account = ''
         clean.append((sym, shares, cost, broker, account))
+    return clean
 
+
+def replace_broker_all_holdings(broker, rows):
+    """Delete all holdings of broker, then insert new rows (each carries its own account)."""
+    clean = _clean_rows(rows, broker, default_account='')
+    with get_conn() as conn:
+        conn.execute("DELETE FROM holdings WHERE broker=?", (broker,))
+        if clean:
+            conn.executemany(
+                "INSERT INTO holdings (symbol, shares, cost_per_share, broker, account) VALUES (?,?,?,?,?)",
+                clean,
+            )
+
+
+def replace_account_holdings(broker, account, rows):
+    # Force every row into this single account (ignore any per-row 'account' key)
+    clean = [(s, sh, c, b, account) for (s, sh, c, b, _a) in _clean_rows(rows, broker, default_account=account)]
     with get_conn() as conn:
         conn.execute("DELETE FROM holdings WHERE broker=? AND account=?", (broker, account))
         if clean:
@@ -110,6 +136,29 @@ def replace_account_holdings(broker, account, rows):
                 "INSERT INTO holdings (symbol, shares, cost_per_share, broker, account) VALUES (?,?,?,?,?)",
                 clean,
             )
+
+
+def get_sources():
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT broker, account,
+                   COUNT(*) AS count,
+                   MAX(created_at) AS last_updated
+            FROM holdings
+            GROUP BY broker, account
+            ORDER BY broker, account
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_broker(broker):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM holdings WHERE broker=?", (broker,))
+
+
+def delete_account(broker, account):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM holdings WHERE broker=? AND account=?", (broker, account))
 
 
 # --- Snapshots ---
@@ -170,17 +219,18 @@ def get_broker_profile(broker):
     return dict(row) if row else None
 
 
-def save_broker_profile(broker, symbol_col, shares_col, cost_col, cost_is_total):
+def save_broker_profile(broker, symbol_col, shares_col, cost_col, cost_is_total, account_col=''):
     with get_conn() as conn:
         conn.execute("""
-            INSERT INTO broker_profiles (broker, symbol_col, shares_col, cost_col, cost_is_total)
-            VALUES (?,?,?,?,?)
+            INSERT INTO broker_profiles (broker, symbol_col, shares_col, cost_col, cost_is_total, account_col)
+            VALUES (?,?,?,?,?,?)
             ON CONFLICT(broker) DO UPDATE SET
                 symbol_col=excluded.symbol_col,
                 shares_col=excluded.shares_col,
                 cost_col=excluded.cost_col,
-                cost_is_total=excluded.cost_is_total
-        """, (broker, symbol_col, shares_col, cost_col, 1 if cost_is_total else 0))
+                cost_is_total=excluded.cost_is_total,
+                account_col=excluded.account_col
+        """, (broker, symbol_col, shares_col, cost_col, 1 if cost_is_total else 0, account_col or ''))
 
 
 def delete_broker_profile(broker):

@@ -61,11 +61,12 @@ function renderDetailed(holdings) {
       <th class="num">Market Value</th>
       <th class="num">Gain / Loss</th>
       <th class="num">Return</th>
+      <th class="num">Updated</th>
       <th></th>
     </tr>`;
 
   if (!holdings.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
   tbody.innerHTML = holdings.map(h => `
@@ -79,6 +80,7 @@ function renderDetailed(holdings) {
       <td class="num">${fmt(h.market_value)}</td>
       <td class="num ${gainClass(h.gain)}">${fmt(h.gain)}</td>
       <td class="num ${gainClass(h.gain_pct)}">${fmtPct(h.gain_pct)}</td>
+      <td class="num muted-val" style="font-size:12px">${fmtDateShort(h.created_at)}</td>
       <td><button class="del-btn" data-id="${h.id}" title="Remove">✕</button></td>
     </tr>
   `).join('');
@@ -88,6 +90,7 @@ function renderDetailed(holdings) {
       if (!confirm('Remove this holding?')) return;
       await fetch(`/api/holding/${btn.dataset.id}`, { method: 'DELETE' });
       loadPortfolio();
+      loadSources();
     });
   });
 }
@@ -101,13 +104,15 @@ function aggregateBySymbol(holdings) {
         symbol: h.symbol, shares: 0, cost_total: 0,
         market_value: 0, has_value: false,
         current_price: h.current_price, locations: [],
+        last_updated: '',
       };
     }
     const a = map[k];
     a.shares += h.shares;
     a.cost_total += h.cost_basis;
     if (h.market_value != null) { a.market_value += h.market_value; a.has_value = true; }
-    a.current_price = h.current_price;  // same per symbol
+    a.current_price = h.current_price;
+    if (h.created_at && h.created_at > a.last_updated) a.last_updated = h.created_at;
     const loc = h.account ? `${h.broker} · ${h.account}` : h.broker;
     a.locations.push({ loc, shares: h.shares });
   }
@@ -134,10 +139,11 @@ function renderCombined(holdings) {
       <th class="num">Market Value</th>
       <th class="num">Gain / Loss</th>
       <th class="num">Return</th>
+      <th class="num">Updated</th>
     </tr>`;
 
   if (!holdings.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
 
@@ -156,6 +162,7 @@ function renderCombined(holdings) {
         <td class="num">${fmt(r.market_value)}</td>
         <td class="num ${gainClass(r.gain)}">${fmt(r.gain)}</td>
         <td class="num ${gainClass(r.gain_pct)}">${fmtPct(r.gain_pct)}</td>
+        <td class="num muted-val" style="font-size:12px">${fmtDateShort(r.last_updated)}</td>
       </tr>`;
   }).join('');
 }
@@ -223,8 +230,8 @@ let _importRows = [];
 let _importBroker = '';
 let _colRoles = {};  // col name -> 'symbol'|'shares'|'cost'|null
 
-const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost'];
-const ROLE_LABEL = { symbol: 'Symbol', shares: 'Shares', cost: 'Cost' };
+const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost', 'account'];
+const ROLE_LABEL = { symbol: 'Symbol', shares: 'Shares', cost: 'Cost', account: 'Account' };
 
 function renderColumnPicker() {
   const container = document.getElementById('columnPicker');
@@ -236,6 +243,7 @@ function renderColumnPicker() {
       `<option value="symbol"${role==='symbol'?' selected':''}>Symbol</option>`,
       `<option value="shares"${role==='shares'?' selected':''}>Shares</option>`,
       `<option value="cost"${role==='cost'?' selected':''}>Cost</option>`,
+      `<option value="account"${role==='account'?' selected':''}>Account</option>`,
     ].join('');
     return `<th class="${role ? 'th-' + role : ''}">
       <div class="col-head">
@@ -321,9 +329,10 @@ document.getElementById('previewBtn').addEventListener('click', async () => {
   _colRoles = {};
   for (const col of _importColumns) _colRoles[col] = null;
   const m = json.mapping;
-  if (m.symbol && _importColumns.includes(m.symbol)) _colRoles[m.symbol] = 'symbol';
-  if (m.shares && _importColumns.includes(m.shares)) _colRoles[m.shares] = 'shares';
-  if (m.cost   && _importColumns.includes(m.cost))   _colRoles[m.cost]   = 'cost';
+  if (m.symbol  && _importColumns.includes(m.symbol))  _colRoles[m.symbol]  = 'symbol';
+  if (m.shares  && _importColumns.includes(m.shares))  _colRoles[m.shares]  = 'shares';
+  if (m.cost    && _importColumns.includes(m.cost))    _colRoles[m.cost]    = 'cost';
+  if (m.account && _importColumns.includes(m.account)) _colRoles[m.account] = 'account';
   document.getElementById('costIsTotal').checked = !!m.cost_is_total;
 
   document.getElementById('saveProfile').checked = !json.has_profile;
@@ -365,9 +374,10 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   const file = document.getElementById('csvFile').files[0];
 
   const mapping = {
-    symbol: Object.entries(_colRoles).find(([, r]) => r === 'symbol')?.[0] || null,
-    shares: Object.entries(_colRoles).find(([, r]) => r === 'shares')?.[0] || null,
-    cost:   Object.entries(_colRoles).find(([, r]) => r === 'cost')?.[0]   || null,
+    symbol:  Object.entries(_colRoles).find(([, r]) => r === 'symbol')?.[0]  || null,
+    shares:  Object.entries(_colRoles).find(([, r]) => r === 'shares')?.[0]  || null,
+    cost:    Object.entries(_colRoles).find(([, r]) => r === 'cost')?.[0]    || null,
+    account: Object.entries(_colRoles).find(([, r]) => r === 'account')?.[0] || null,
     cost_is_total: document.getElementById('costIsTotal').checked,
   };
 
@@ -410,7 +420,74 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   loadPortfolio();
   setTimeout(loadSnapshots, 1500);
   loadProfiles();
+  loadSources();
 });
+
+// ── Imported Sources (broker · account management) ────────────────────────
+
+async function loadSources() {
+  const res = await fetch('/api/sources');
+  const sources = await res.json();
+  const wrap = document.getElementById('sourcesSection');
+  const list = document.getElementById('sourcesList');
+
+  if (!sources.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+
+  // Group by broker
+  const byBroker = {};
+  for (const s of sources) (byBroker[s.broker] ||= []).push(s);
+
+  list.innerHTML = Object.entries(byBroker).map(([broker, accs]) => {
+    const total = accs.reduce((n, s) => n + s.count, 0);
+    const last = accs.map(s => s.last_updated || '').sort().pop();
+    const showAccountRows = accs.length > 1 || (accs.length === 1 && accs[0].account);
+
+    const accountLines = showAccountRows ? accs.map(s => `
+      <div class="source-row source-account">
+        <span class="source-acct">${s.account ? escHtml(s.account) : '<em style="color:var(--muted)">(no account)</em>'}</span>
+        <span class="source-meta">${s.count} holding${s.count !== 1 ? 's' : ''} · updated ${fmtDateShort(s.last_updated)}</span>
+        <button class="del-btn del-acct-btn"
+                data-broker="${escHtml(broker)}"
+                data-account="${escHtml(s.account || '')}"
+                title="Delete this account">✕</button>
+      </div>
+    `).join('') : '';
+
+    return `
+      <div class="broker-group">
+        <div class="source-row broker-header">
+          <span class="source-broker">${escHtml(broker)}</span>
+          <span class="source-meta">${total} holding${total !== 1 ? 's' : ''} · last updated ${fmtDateShort(last)}</span>
+          <button class="btn-ghost btn-sm del-broker-btn" data-broker="${escHtml(broker)}">Delete entire broker</button>
+        </div>
+        ${accountLines}
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.del-acct-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const broker = btn.dataset.broker;
+      const account = btn.dataset.account;
+      const display = account ? `${broker} · ${account}` : `${broker} (no account)`;
+      if (!confirm(`Delete all holdings from ${display}?`)) return;
+      const params = new URLSearchParams({ broker, account });
+      await fetch(`/api/sources?${params}`, { method: 'DELETE' });
+      loadPortfolio();
+      loadSources();
+    });
+  });
+  list.querySelectorAll('.del-broker-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const broker = btn.dataset.broker;
+      if (!confirm(`Delete ALL holdings from ${broker} across every account?`)) return;
+      await fetch(`/api/sources?broker=${encodeURIComponent(broker)}`, { method: 'DELETE' });
+      loadPortfolio();
+      loadSources();
+    });
+  });
+}
 
 // ── Broker profiles ────────────────────────────────────────────────────────
 
@@ -618,7 +695,9 @@ function fmtDate(iso) {
 }
 
 function fmtDateShort(iso) {
+  if (!iso) return '—';
   const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
@@ -676,6 +755,7 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
     document.getElementById('modal').style.display = 'none';
     e.target.reset();
     loadPortfolio();
+    loadSources();
   }
 });
 
@@ -695,3 +775,4 @@ document.querySelectorAll('.toggle-btn').forEach(btn => {
 loadPortfolio();
 loadSnapshots();
 loadProfiles();
+loadSources();

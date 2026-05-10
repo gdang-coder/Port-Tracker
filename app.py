@@ -138,19 +138,28 @@ def _detect_mapping(columns: list[str]) -> dict:
 
 
 def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
-    """Parse a CSV using an explicit column mapping. Returns valid holdings."""
+    """Parse a CSV using an explicit column mapping. Returns valid holdings.
+
+    If mapping['account'] is set, each returned row carries its own 'account'
+    pulled from that column (per-row). Otherwise rows have no account key
+    and the caller decides what account to assign.
+    """
     df = _read_csv(file_bytes)
     columns = list(df.columns)
 
     sym_col = mapping.get('symbol')
     shr_col = mapping.get('shares')
     cost_col = mapping.get('cost')
+    acct_col = mapping.get('account') or None
     cost_is_total = bool(mapping.get('cost_is_total'))
 
     if not (sym_col and shr_col and cost_col):
         raise ValueError("Symbol, shares, and cost columns must all be selected.")
 
-    missing = [c for c in [sym_col, shr_col, cost_col] if c not in columns]
+    required = [sym_col, shr_col, cost_col]
+    if acct_col:
+        required.append(acct_col)
+    missing = [c for c in required if c not in columns]
     if missing:
         raise ValueError(
             f"Column(s) not in file: {', '.join(missing)}. "
@@ -158,12 +167,10 @@ def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
         )
 
     rows = []
-    skipped = 0
     for _, r in df.iterrows():
         raw_sym = r.get(sym_col)
         sym = str(raw_sym if raw_sym is not None else '').strip().upper()
         if not _SYMBOL_RE.match(sym):
-            skipped += 1
             continue  # skip cash, totals, blank rows, non-ticker symbols
         shares = _parse_num(r.get(shr_col))
         cost_raw = _parse_num(r.get(cost_col))
@@ -174,11 +181,15 @@ def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
         cost_per_share = (cost_raw / shares) if cost_is_total else cost_raw
         if not math.isfinite(cost_per_share) or cost_per_share <= 0 or cost_per_share > 1e7:
             continue
-        rows.append({
+        row = {
             'symbol': sym,
             'shares': float(shares),
             'cost_per_share': float(cost_per_share),
-        })
+        }
+        if acct_col:
+            raw_acct = r.get(acct_col)
+            row['account'] = str(raw_acct if raw_acct is not None else '').strip()
+        rows.append(row)
 
     if not rows:
         raise ValueError(
@@ -271,6 +282,7 @@ def upload_preview():
             "symbol": profile["symbol_col"],
             "shares": profile["shares_col"],
             "cost": profile["cost_col"],
+            "account": profile.get("account_col") or None,
             "cost_is_total": bool(profile["cost_is_total"]),
         }
         source = "profile"
@@ -316,7 +328,13 @@ def upload_confirm():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    db.replace_account_holdings(broker, account, rows)
+    if mapping.get("account"):
+        # Each row has its own account — replace ALL holdings of this broker
+        db.replace_broker_all_holdings(broker, rows)
+        where = f"{broker} (multi-account)"
+    else:
+        db.replace_account_holdings(broker, account, rows)
+        where = f"{broker} · {account}" if account else broker
 
     if save_profile:
         db.save_broker_profile(
@@ -325,10 +343,9 @@ def upload_confirm():
             mapping["shares"],
             mapping["cost"],
             mapping.get("cost_is_total", False),
+            mapping.get("account") or "",
         )
 
-    # Snapshot the new state in the background so the request returns fast.
-    where = f"{broker} · {account}" if account else broker
     label = f"{where} import · {len(rows)} holdings"
     threading.Thread(target=_snapshot_async, args=(label,), daemon=True).start()
 
@@ -397,6 +414,25 @@ def get_snapshot(snapshot_id):
 @app.route("/api/snapshots/<int:snapshot_id>", methods=["DELETE"])
 def delete_snapshot(snapshot_id):
     db.delete_snapshot(snapshot_id)
+    return jsonify({"ok": True})
+
+
+# --- Source (broker, account) management ---
+
+@app.route("/api/sources", methods=["GET"])
+def list_sources():
+    return jsonify(db.get_sources())
+
+
+@app.route("/api/sources", methods=["DELETE"])
+def delete_source():
+    broker = (request.args.get("broker") or "").strip()
+    if not broker:
+        return jsonify({"error": "broker required"}), 400
+    if "account" in request.args:
+        db.delete_account(broker, (request.args.get("account") or "").strip())
+    else:
+        db.delete_broker(broker)
     return jsonify({"ok": True})
 
 
