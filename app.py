@@ -55,10 +55,12 @@ def _norm(s: str) -> str:
     return s.strip().lower()
 
 
-def _parse_num(s: str) -> float:
+def _parse_num(s) -> float:
+    if s is None:
+        return 0.0
     return float(
-        s.strip().replace(",", "").replace("$", "")
-          .replace("(", "-").replace(")", "").replace("%", "") or "0"
+        str(s).strip().replace(",", "").replace("$", "")
+              .replace("(", "-").replace(")", "").replace("%", "") or "0"
     )
 
 
@@ -141,9 +143,9 @@ def _parse_with_mapping(file_bytes: bytes, mapping: dict) -> list[dict]:
         if not sym or sym.startswith("--") or sym.lower() in {"pending", "n/a", ""}:
             continue
         try:
-            shares = _parse_num(row[shares_col])
-            cost_raw = _parse_num(row[cost_col])
-        except ValueError:
+            shares = _parse_num(row.get(shares_col))
+            cost_raw = _parse_num(row.get(cost_col))
+        except (ValueError, ZeroDivisionError):
             continue  # skip unparseable rows (totals rows, etc.)
 
         if shares <= 0 or cost_raw <= 0:
