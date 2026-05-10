@@ -97,40 +97,34 @@
         </div>
       </div>
 
-      <!-- Step 2: confirm mapping -->
+      <!-- Step 2: visual column picker -->
       <div id="importStep2" style="display:none">
         <div class="mapping-header">
           <span id="mappingTitle" class="mapping-title"></span>
           <button class="btn-ghost btn-sm" id="backBtn">&#8592; Change file</button>
         </div>
         <div id="profileBanner" class="profile-banner" style="display:none"></div>
-        <div class="mapping-grid">
-          <div class="field">
-            <label>Symbol column <span class="req">*</span></label>
-            <select id="mapSymbol"></select>
-          </div>
-          <div class="field">
-            <label>Shares column <span class="req">*</span></label>
-            <select id="mapShares"></select>
-          </div>
-          <div class="field">
-            <label>Cost column <span class="req">*</span></label>
-            <select id="mapCost"></select>
-          </div>
-          <div class="field field-check">
-            <label class="check-label">
+        <p class="hint" style="margin:0 0 4px">
+          Click a column header to assign it as
+          <span style="color:#a5b4fc;font-weight:600">Symbol</span>,
+          <span style="color:#86efac;font-weight:600">Shares</span>, or
+          <span style="color:#fcd34d;font-weight:600">Cost</span>.
+          Click again to cycle through roles or unassign.
+        </p>
+        <div id="columnPicker" style="overflow-x:auto;border:1px solid var(--border);border-radius:6px"></div>
+        <div class="mapping-footer">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <label class="check-label" id="costIsTotalRow" style="display:none">
               <input type="checkbox" id="costIsTotal" />
               Cost column is the <strong>total</strong> amount paid (not per-share)
             </label>
+            <label class="check-label">
+              <input type="checkbox" id="saveProfile" checked />
+              Save as <strong id="saveProfileBroker"></strong> profile
+            </label>
           </div>
-        </div>
-        <div class="mapping-footer">
-          <label class="check-label">
-            <input type="checkbox" id="saveProfile" checked />
-            Save as <strong id="saveProfileBroker"></strong> profile
-          </label>
           <div style="display:flex;gap:10px;align-items:center">
-            <button class="btn" id="confirmImportBtn">Import</button>
+            <button class="btn" id="confirmImportBtn" disabled>Import</button>
             <span id="confirmStatus" class="status-msg"></span>
           </div>
         </div>

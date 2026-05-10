@@ -123,10 +123,69 @@ function renderCharts(holdings) {
   });
 }
 
-// ── Import: two-step flow ──────────────────────────────────────────────────
+// ── Import: visual column picker ───────────────────────────────────────────
 
-let _previewColumns = [];
-let _previewBroker = '';
+let _importColumns = [];
+let _importRows = [];
+let _importBroker = '';
+let _colRoles = {};  // col name -> 'symbol'|'shares'|'cost'|null
+
+const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost'];
+const ROLE_LABEL = { symbol: 'Symbol', shares: 'Shares', cost: 'Cost' };
+
+function renderColumnPicker() {
+  const container = document.getElementById('columnPicker');
+
+  const headerCells = _importColumns.map(col => {
+    const role = _colRoles[col] || null;
+    const badge = role
+      ? `<span class="role-badge role-${role}">${ROLE_LABEL[role]}</span>`
+      : `<span class="role-badge role-none">unassigned</span>`;
+    return `<th><button class="col-header-btn${role ? ' assigned-' + role : ''}" data-col="${escHtml(col)}">${escHtml(col)}<br>${badge}</button></th>`;
+  }).join('');
+
+  const dataRows = _importRows.map(row =>
+    `<tr>${_importColumns.map((col, i) => {
+      const role = _colRoles[col] || null;
+      return `<td class="${role ? 'col-' + role : ''}">${escHtml(String(row[i] ?? ''))}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+
+  const emptyRow = `<tr><td colspan="${_importColumns.length}" class="empty" style="padding:20px">No preview rows</td></tr>`;
+
+  container.innerHTML = `
+    <table class="col-picker-table">
+      <thead><tr>${headerCells}</tr></thead>
+      <tbody>${dataRows || emptyRow}</tbody>
+    </table>
+  `;
+
+  container.querySelectorAll('.col-header-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const col = btn.dataset.col;
+      const cur = _colRoles[col] || null;
+      const idx = ROLE_CYCLE.indexOf(cur);
+      const next = ROLE_CYCLE[(idx + 1) % ROLE_CYCLE.length];
+
+      // Unassign any other column that had this same role
+      if (next) {
+        for (const c of Object.keys(_colRoles)) {
+          if (_colRoles[c] === next && c !== col) _colRoles[c] = null;
+        }
+      }
+      _colRoles[col] = next;
+      renderColumnPicker();
+      updateImportBtn();
+    });
+  });
+}
+
+function updateImportBtn() {
+  const roles = Object.values(_colRoles);
+  const allSet = ['symbol', 'shares', 'cost'].every(r => roles.includes(r));
+  document.getElementById('confirmImportBtn').disabled = !allSet;
+  document.getElementById('costIsTotalRow').style.display = roles.includes('cost') ? 'flex' : 'none';
+}
 
 document.getElementById('previewBtn').addEventListener('click', async () => {
   const broker = document.getElementById('brokerName').value.trim();
@@ -151,34 +210,30 @@ document.getElementById('previewBtn').addEventListener('click', async () => {
   }
 
   setStatus(status, '', '');
-  _previewColumns = json.columns;
-  _previewBroker = broker;
+  _importColumns = json.columns;
+  _importRows = json.rows || [];
+  _importBroker = broker;
 
-  // Populate column dropdowns
-  const opts = ['', ...json.columns].map(c =>
-    `<option value="${escHtml(c)}">${escHtml(c) || '— select —'}</option>`
-  ).join('');
-  ['mapSymbol', 'mapShares', 'mapCost'].forEach(id => {
-    document.getElementById(id).innerHTML = opts;
-  });
-
-  // Pre-select detected / profile mapping
+  // Init all roles to null, then apply auto-detect / profile mapping
+  _colRoles = {};
+  for (const col of _importColumns) _colRoles[col] = null;
   const m = json.mapping;
-  if (m.symbol) document.getElementById('mapSymbol').value = m.symbol;
-  if (m.shares) document.getElementById('mapShares').value = m.shares;
-  if (m.cost)   document.getElementById('mapCost').value   = m.cost;
+  if (m.symbol && _importColumns.includes(m.symbol)) _colRoles[m.symbol] = 'symbol';
+  if (m.shares && _importColumns.includes(m.shares)) _colRoles[m.shares] = 'shares';
+  if (m.cost   && _importColumns.includes(m.cost))   _colRoles[m.cost]   = 'cost';
   document.getElementById('costIsTotal').checked = !!m.cost_is_total;
+
   document.getElementById('saveProfile').checked = !json.has_profile;
   document.getElementById('saveProfileBroker').textContent = `"${broker}"`;
 
   // Profile banner
   const banner = document.getElementById('profileBanner');
   if (json.source === 'profile') {
-    banner.textContent = `✓ Using saved profile for ${broker} — columns pre-filled. Adjust if the export format changed.`;
+    banner.textContent = `✓ Using saved profile for ${broker} — columns pre-assigned. Adjust if the export format changed.`;
     banner.style.display = 'block';
     banner.className = 'profile-banner profile-banner-ok';
   } else if (json.source === 'auto') {
-    banner.textContent = 'Columns auto-detected. Review the mapping below before importing.';
+    banner.textContent = 'Columns auto-detected — review the assignment below before importing.';
     banner.style.display = 'block';
     banner.className = 'profile-banner profile-banner-info';
   } else {
@@ -188,6 +243,9 @@ document.getElementById('previewBtn').addEventListener('click', async () => {
   const colCount = json.columns.length;
   document.getElementById('mappingTitle').textContent =
     `${file.name} — ${colCount} column${colCount !== 1 ? 's' : ''} found`;
+
+  renderColumnPicker();
+  updateImportBtn();
 
   document.getElementById('importStep1').style.display = 'none';
   document.getElementById('importStep2').style.display = 'block';
@@ -201,23 +259,22 @@ document.getElementById('backBtn').addEventListener('click', () => {
 
 document.getElementById('confirmImportBtn').addEventListener('click', async () => {
   const status = document.getElementById('confirmStatus');
-  const broker = _previewBroker;
   const file = document.getElementById('csvFile').files[0];
 
   const mapping = {
-    symbol: document.getElementById('mapSymbol').value,
-    shares: document.getElementById('mapShares').value,
-    cost:   document.getElementById('mapCost').value,
+    symbol: Object.entries(_colRoles).find(([, r]) => r === 'symbol')?.[0] || null,
+    shares: Object.entries(_colRoles).find(([, r]) => r === 'shares')?.[0] || null,
+    cost:   Object.entries(_colRoles).find(([, r]) => r === 'cost')?.[0]   || null,
     cost_is_total: document.getElementById('costIsTotal').checked,
   };
 
   if (!mapping.symbol || !mapping.shares || !mapping.cost) {
-    setStatus(status, 'All three columns must be selected', 'err');
+    setStatus(status, 'Assign all three columns first', 'err');
     return;
   }
 
   const fd = new FormData();
-  fd.append('broker', broker);
+  fd.append('broker', _importBroker);
   fd.append('file', file);
   fd.append('mapping', JSON.stringify(mapping));
   fd.append('save_profile', document.getElementById('saveProfile').checked ? 'true' : 'false');
@@ -246,7 +303,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
   document.getElementById('csvFile').value = '';
 
   loadPortfolio();
-  setTimeout(loadSnapshots, 1500);  // give background snapshot time to finish
+  setTimeout(loadSnapshots, 1500);
   loadProfiles();
 });
 

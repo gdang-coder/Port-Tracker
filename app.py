@@ -271,8 +271,14 @@ def upload_preview():
         mapping = _detect_mapping(columns)
         source = "auto"
 
+    sample_rows = [
+        [str(cell) if cell is not None else '' for cell in row]
+        for row in df.head(6).values.tolist()
+    ]
+
     return jsonify({
         "columns": columns,
+        "rows": sample_rows,
         "mapping": mapping,
         "source": source,
         "has_profile": profile is not None,

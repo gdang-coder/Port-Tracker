@@ -513,6 +513,80 @@ input[type="file"] { padding: 6px 10px; cursor: pointer; }
 
 p.empty { color: var(--muted); padding: 32px; text-align: center; }
 
+/* Visual column picker */
+.col-picker-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: auto;
+}
+
+.col-picker-table th {
+  padding: 0;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--bg);
+  font-weight: normal;
+}
+
+.col-picker-table th:last-child { border-right: none; }
+
+.col-header-btn {
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.15s;
+}
+
+.col-header-btn:hover          { background: rgba(99,102,241,0.08); }
+.col-header-btn.assigned-symbol { background: rgba(99,102,241,0.14); }
+.col-header-btn.assigned-shares { background: rgba(34,197,94,0.11); }
+.col-header-btn.assigned-cost   { background: rgba(245,158,11,0.11); }
+
+.role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.role-none   { color: var(--muted); font-weight: 400; }
+.role-symbol { background: rgba(99,102,241,0.22);  color: #a5b4fc; }
+.role-shares { background: rgba(34,197,94,0.22);   color: #86efac; }
+.role-cost   { background: rgba(245,158,11,0.22);  color: #fcd34d; }
+
+.col-picker-table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-picker-table td:last-child { border-right: none; }
+.col-picker-table tbody tr:last-child td { border-bottom: none; }
+.col-picker-table td.col-symbol { color: #a5b4fc; background: rgba(99,102,241,0.04); }
+.col-picker-table td.col-shares { color: #86efac; background: rgba(34,197,94,0.04); }
+.col-picker-table td.col-cost   { color: #fcd34d; background: rgba(245,158,11,0.04); }
+
 @media (max-width: 640px) {
   main { padding: 16px; }
   .charts { grid-template-columns: 1fr; }
