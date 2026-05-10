@@ -16,6 +16,37 @@ let brokerChart = null;
 let timelineChart = null;
 let _viewMode = 'detailed';   // 'detailed' | 'combined'
 let _lastHoldings = [];
+let _sort = { key: 'symbol', dir: 'asc' };
+
+function sortRows(rows, key, dir) {
+  const mul = dir === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const va = a[key], vb = b[key];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;   // nulls always last
+    if (vb == null) return -1;
+    if (typeof va === 'string' && typeof vb === 'string') return mul * va.localeCompare(vb);
+    return mul * (va - vb);
+  });
+}
+
+function sortArrow(key) {
+  if (_sort.key !== key) return '<span class="sort-arrow">↕</span>';
+  return _sort.dir === 'asc'
+    ? '<span class="sort-arrow active">▲</span>'
+    : '<span class="sort-arrow active">▼</span>';
+}
+
+function applySort(key) {
+  if (_sort.key === key) _sort.dir = _sort.dir === 'asc' ? 'desc' : 'asc';
+  else { _sort.key = key; _sort.dir = 'asc'; }
+  renderTable(_lastHoldings);
+}
+
+document.getElementById('holdingsHead').addEventListener('click', e => {
+  const th = e.target.closest('th[data-sort]');
+  if (th) applySort(th.dataset.sort);
+});
 
 // ── Portfolio ──────────────────────────────────────────────────────────────
 
@@ -52,16 +83,16 @@ function renderDetailed(holdings) {
 
   head.innerHTML = `
     <tr>
-      <th>Symbol</th>
-      <th>Broker</th>
-      <th>Account</th>
-      <th class="num">Shares</th>
-      <th class="num">Avg Cost</th>
-      <th class="num">Current Price</th>
-      <th class="num">Market Value</th>
-      <th class="num">Gain / Loss</th>
-      <th class="num">Return</th>
-      <th class="num">Updated</th>
+      <th data-sort="symbol">Symbol ${sortArrow('symbol')}</th>
+      <th data-sort="broker">Broker ${sortArrow('broker')}</th>
+      <th data-sort="account">Account ${sortArrow('account')}</th>
+      <th class="num" data-sort="shares">Shares ${sortArrow('shares')}</th>
+      <th class="num" data-sort="cost_per_share">Avg Cost ${sortArrow('cost_per_share')}</th>
+      <th class="num" data-sort="current_price">Current Price ${sortArrow('current_price')}</th>
+      <th class="num" data-sort="market_value">Market Value ${sortArrow('market_value')}</th>
+      <th class="num" data-sort="gain">Gain / Loss ${sortArrow('gain')}</th>
+      <th class="num" data-sort="gain_pct">Return ${sortArrow('gain_pct')}</th>
+      <th class="num" data-sort="created_at">Updated ${sortArrow('created_at')}</th>
       <th></th>
     </tr>`;
 
@@ -69,7 +100,8 @@ function renderDetailed(holdings) {
     tbody.innerHTML = '<tr><td colspan="11" class="empty">No holdings yet. Import a CSV or add one manually.</td></tr>';
     return;
   }
-  tbody.innerHTML = holdings.map(h => `
+  const sorted = sortRows(holdings, _sort.key, _sort.dir);
+  tbody.innerHTML = sorted.map(h => `
     <tr>
       <td class="symbol">${h.symbol}</td>
       <td><span class="broker-badge">${escHtml(h.broker)}</span></td>
@@ -153,15 +185,15 @@ function renderCombined(holdings) {
 
   head.innerHTML = `
     <tr>
-      <th>Symbol</th>
+      <th data-sort="symbol">Symbol ${sortArrow('symbol')}</th>
       <th>Held In</th>
-      <th class="num">Total Shares</th>
-      <th class="num">Avg Cost</th>
-      <th class="num">Current Price</th>
-      <th class="num">Market Value</th>
-      <th class="num">Gain / Loss</th>
-      <th class="num">Return</th>
-      <th class="num">Updated</th>
+      <th class="num" data-sort="shares">Total Shares ${sortArrow('shares')}</th>
+      <th class="num" data-sort="cost_per_share">Avg Cost ${sortArrow('cost_per_share')}</th>
+      <th class="num" data-sort="current_price">Current Price ${sortArrow('current_price')}</th>
+      <th class="num" data-sort="market_value">Market Value ${sortArrow('market_value')}</th>
+      <th class="num" data-sort="gain">Gain / Loss ${sortArrow('gain')}</th>
+      <th class="num" data-sort="gain_pct">Return ${sortArrow('gain_pct')}</th>
+      <th class="num" data-sort="last_updated">Updated ${sortArrow('last_updated')}</th>
     </tr>`;
 
   if (!holdings.length) {
@@ -169,7 +201,7 @@ function renderCombined(holdings) {
     return;
   }
 
-  const rows = aggregateBySymbol(holdings);
+  const rows = sortRows(aggregateBySymbol(holdings), _sort.key, _sort.dir);
   tbody.innerHTML = rows.map(r => {
     const locText = r.locations.map(l =>
       `${escHtml(l.loc)} (${l.shares.toLocaleString('en-US', { maximumFractionDigits: 4 })})`

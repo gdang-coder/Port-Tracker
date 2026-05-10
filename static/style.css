@@ -132,6 +132,18 @@ th {
   white-space: nowrap;
 }
 
+th[data-sort] { cursor: pointer; user-select: none; transition: color 0.15s; }
+th[data-sort]:hover { color: var(--text); }
+
+.sort-arrow {
+  display: inline-block;
+  font-size: 9px;
+  margin-left: 4px;
+  color: var(--border);
+  vertical-align: middle;
+}
+.sort-arrow.active { color: var(--accent); }
+
 td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
