@@ -43,6 +43,7 @@ function applySort(key) {
   if (_sort.key === key) _sort.dir = _sort.dir === 'asc' ? 'desc' : 'asc';
   else { _sort.key = key; _sort.dir = 'asc'; }
   renderTable(_lastHoldings);
+  renderCharts(_lastHoldings);
 }
 
 document.getElementById('holdingsHead').addEventListener('click', e => {
