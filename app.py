@@ -8,12 +8,6 @@ from flask import Flask, jsonify, request, render_template
 import db
 import prices
 
-try:
-    import pdfplumber
-    import anthropic
-    _PDF_AVAILABLE = True
-except ImportError:
-    _PDF_AVAILABLE = False
 
 app = Flask(__name__)
 db.init_db()
@@ -363,8 +357,11 @@ def upload_confirm():
 
 @app.route("/api/upload/parse-pdf", methods=["POST"])
 def upload_parse_pdf():
-    if not _PDF_AVAILABLE:
-        return jsonify({"error": "PDF support not installed (pip install pdfplumber anthropic)"}), 500
+    try:
+        import pdfplumber
+        import anthropic
+    except ImportError as e:
+        return jsonify({"error": f"PDF support not installed: {e}. Run: pip install pdfplumber anthropic"}), 500
 
     broker = request.form.get("broker", "").strip()
     account = request.form.get("account", "").strip()
