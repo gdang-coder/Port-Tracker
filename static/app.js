@@ -332,15 +332,32 @@ document.getElementById('importModeFile').addEventListener('click', () => {
   _importMode = 'file';
   document.getElementById('importModeFile').classList.add('active');
   document.getElementById('importModePaste').classList.remove('active');
+  document.getElementById('importModePDF').classList.remove('active');
   document.getElementById('importFileArea').style.display = '';
   document.getElementById('importPasteArea').style.display = 'none';
+  document.getElementById('importPdfArea').style.display = 'none';
+  document.getElementById('previewBtn').style.display = '';
 });
 document.getElementById('importModePaste').addEventListener('click', () => {
   _importMode = 'paste';
   document.getElementById('importModePaste').classList.add('active');
   document.getElementById('importModeFile').classList.remove('active');
+  document.getElementById('importModePDF').classList.remove('active');
   document.getElementById('importFileArea').style.display = 'none';
   document.getElementById('importPasteArea').style.display = 'block';
+  document.getElementById('importPdfArea').style.display = 'none';
+  document.getElementById('previewBtn').style.display = '';
+});
+document.getElementById('importModePDF').addEventListener('click', () => {
+  _importMode = 'pdf';
+  document.getElementById('importModePDF').classList.add('active');
+  document.getElementById('importModeFile').classList.remove('active');
+  document.getElementById('importModePaste').classList.remove('active');
+  document.getElementById('importFileArea').style.display = 'none';
+  document.getElementById('importPasteArea').style.display = 'none';
+  document.getElementById('importPdfArea').style.display = 'block';
+  document.getElementById('previewBtn').style.display = 'none';
+  document.getElementById('previewStatus').textContent = '';
 });
 
 const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost', 'account'];
@@ -1333,6 +1350,165 @@ document.getElementById('txConfirmBtn').addEventListener('click', async () => {
   document.getElementById('txAccountName').value = '';
   document.getElementById('txCsvFile').value = '';
   loadTransactions();
+});
+
+// ── PDF statement import ───────────────────────────────────────────────────
+
+let _pdfHoldings = [];
+let _pdfBroker = '';
+let _pdfAccount = '';
+
+function renderPdfHoldings() {
+  const container = document.getElementById('pdfHoldingsTable');
+  if (!_pdfHoldings.length) {
+    container.innerHTML = '<p class="empty" style="padding:16px">No holdings found.</p>';
+    return;
+  }
+  const inputStyle = 'background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:4px;padding:4px 6px;font-size:13px';
+  container.innerHTML = `
+    <table class="col-picker-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th class="num">Shares</th>
+          <th class="num">Avg Cost / Share</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${_pdfHoldings.map((h, i) => `
+          <tr>
+            <td><input class="pdf-sym" data-i="${i}" type="text" value="${escHtml(h.symbol)}"
+              style="${inputStyle};width:80px;font-family:monospace;text-transform:uppercase" /></td>
+            <td class="num"><input class="pdf-shares" data-i="${i}" type="number" value="${h.shares}"
+              min="0.0001" step="any" style="${inputStyle};width:110px" /></td>
+            <td class="num"><input class="pdf-cost" data-i="${i}" type="number" value="${h.cost_per_share.toFixed(4)}"
+              min="0.0001" step="any" style="${inputStyle};width:120px" /></td>
+            <td><button class="del-btn pdf-del-btn" data-i="${i}" title="Remove">✕</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`;
+
+  container.querySelectorAll('.pdf-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _pdfHoldings.splice(parseInt(btn.dataset.i), 1);
+      renderPdfHoldings();
+    });
+  });
+  container.querySelectorAll('.pdf-sym').forEach(inp => {
+    inp.addEventListener('change', () => {
+      _pdfHoldings[parseInt(inp.dataset.i)].symbol = inp.value.trim().toUpperCase();
+    });
+  });
+  container.querySelectorAll('.pdf-shares').forEach(inp => {
+    inp.addEventListener('change', () => {
+      _pdfHoldings[parseInt(inp.dataset.i)].shares = parseFloat(inp.value) || 0;
+    });
+  });
+  container.querySelectorAll('.pdf-cost').forEach(inp => {
+    inp.addEventListener('change', () => {
+      _pdfHoldings[parseInt(inp.dataset.i)].cost_per_share = parseFloat(inp.value) || 0;
+    });
+  });
+}
+
+document.getElementById('parsePdfBtn').addEventListener('click', async () => {
+  const broker = document.getElementById('brokerName').value.trim();
+  const account = document.getElementById('accountName').value.trim();
+  const status = document.getElementById('parsePdfStatus');
+  const file = document.getElementById('pdfFile').files[0];
+
+  if (!broker) { setStatus(status, 'Enter a broker name first', 'err'); return; }
+  if (!file) { setStatus(status, 'Select a PDF file first', 'err'); return; }
+
+  _pdfBroker = broker;
+  _pdfAccount = account;
+
+  setStatus(status, 'Extracting text and parsing with AI… this may take a moment', '');
+
+  const fd = new FormData();
+  fd.append('broker', broker);
+  fd.append('account', account);
+  fd.append('file', file, file.name);
+
+  let res, json;
+  try {
+    res = await fetch('/api/upload/parse-pdf', { method: 'POST', body: fd });
+    const text = await res.text();
+    try { json = JSON.parse(text); } catch { throw new Error('Server returned: ' + text.slice(0, 200)); }
+  } catch (err) {
+    setStatus(status, 'Error: ' + err.message, 'err');
+    return;
+  }
+
+  if (!res.ok) { setStatus(status, json.error || 'Parse failed', 'err'); return; }
+
+  setStatus(status, '', '');
+  _pdfHoldings = json.holdings;
+
+  const count = json.holdings.length;
+  document.getElementById('pdfStepTitle').textContent =
+    `${file.name} — ${count} position${count !== 1 ? 's' : ''} found by AI`;
+
+  renderPdfHoldings();
+  document.getElementById('importStep1').style.display = 'none';
+  document.getElementById('importPdfStep').style.display = 'block';
+});
+
+document.getElementById('pdfBackBtn').addEventListener('click', () => {
+  document.getElementById('importPdfStep').style.display = 'none';
+  document.getElementById('importStep1').style.display = 'block';
+  document.getElementById('parsePdfStatus').textContent = '';
+});
+
+document.getElementById('pdfConfirmBtn').addEventListener('click', async () => {
+  const status = document.getElementById('pdfConfirmStatus');
+
+  // Read latest values from the editable inputs before submitting
+  document.querySelectorAll('.pdf-sym').forEach(inp => {
+    _pdfHoldings[parseInt(inp.dataset.i)].symbol = inp.value.trim().toUpperCase();
+  });
+  document.querySelectorAll('.pdf-shares').forEach(inp => {
+    _pdfHoldings[parseInt(inp.dataset.i)].shares = parseFloat(inp.value) || 0;
+  });
+  document.querySelectorAll('.pdf-cost').forEach(inp => {
+    _pdfHoldings[parseInt(inp.dataset.i)].cost_per_share = parseFloat(inp.value) || 0;
+  });
+
+  const validRows = _pdfHoldings.filter(h => h.shares > 0 && h.cost_per_share > 0 && h.symbol);
+  if (!validRows.length) { setStatus(status, 'No valid holdings to import', 'err'); return; }
+
+  setStatus(status, 'Importing…', '');
+  let res, json;
+  try {
+    res = await fetch('/api/upload/pdf-confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broker: _pdfBroker, account: _pdfAccount, holdings: validRows }),
+    });
+    const text = await res.text();
+    try { json = JSON.parse(text); } catch { throw new Error('Server returned: ' + text.slice(0, 200)); }
+  } catch (err) {
+    setStatus(status, 'Import failed: ' + err.message, 'err');
+    return;
+  }
+
+  if (!res.ok) { setStatus(status, json.error || 'Import failed', 'err'); return; }
+
+  setStatus(status, `Imported ${json.imported} holdings for ${json.broker}`, 'ok');
+  document.getElementById('importPdfStep').style.display = 'none';
+  document.getElementById('importStep1').style.display = 'block';
+
+  // Reset PDF form
+  _pdfHoldings = [];
+  document.getElementById('brokerName').value = '';
+  document.getElementById('accountName').value = '';
+  document.getElementById('pdfFile').value = '';
+
+  loadPortfolio();
+  setTimeout(loadSnapshots, 1500);
+  loadSources();
 });
 
 // Initial load

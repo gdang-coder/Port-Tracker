@@ -87,16 +87,17 @@
     <!-- Import section -->
     <section class="import-section">
       <div class="import-top-bar">
-        <h2>Import CSV</h2>
+        <h2>Import Holdings</h2>
       </div>
 
-      <!-- Step 1: pick broker + file or paste -->
+      <!-- Step 1: pick broker + file or paste or PDF -->
       <div id="importStep1">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">
-          <p class="hint" style="margin:0">Enter the broker name, then upload a CSV or paste from Excel / Google Sheets.</p>
+          <p class="hint" style="margin:0">Enter the broker name, then upload a CSV, paste from a spreadsheet, or let AI read a brokerage statement PDF.</p>
           <div class="view-toggle">
             <button class="toggle-btn active" id="importModeFile">Upload CSV</button>
             <button class="toggle-btn" id="importModePaste">Paste Table</button>
+            <button class="toggle-btn" id="importModePDF">Upload PDF ✦</button>
           </div>
         </div>
         <div class="import-form">
@@ -120,6 +121,15 @@
             <label for="pasteData">Paste table <span style="color:var(--muted);font-weight:400;font-size:11px">— select cells in your spreadsheet and press Ctrl+V / ⌘+V</span></label>
             <textarea id="pasteData" rows="6" placeholder="Symbol&#9;Shares&#9;Cost&#10;AAPL&#9;10&#9;150.00&#10;MSFT&#9;5&#9;280.00"></textarea>
           </div>
+        </div>
+        <div id="importPdfArea" style="display:none;margin-top:4px">
+          <div class="field">
+            <label for="pdfFile">Brokerage statement <span style="color:var(--muted);font-weight:400;font-size:11px">(PDF)</span></label>
+            <input id="pdfFile" type="file" accept=".pdf,application/pdf" />
+          </div>
+          <p class="hint" style="margin:0 0 10px">Claude will read the PDF and extract your positions automatically. Review and edit before importing.</p>
+          <button class="btn" id="parsePdfBtn">Parse with AI ✦</button>
+          <span id="parsePdfStatus" class="status-msg"></span>
         </div>
       </div>
 
@@ -152,6 +162,25 @@
           <div style="display:flex;gap:10px;align-items:center">
             <button class="btn" id="confirmImportBtn" disabled>Import</button>
             <span id="confirmStatus" class="status-msg"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2b: PDF AI confirmation -->
+      <div id="importPdfStep" style="display:none">
+        <div class="mapping-header">
+          <span id="pdfStepTitle" class="mapping-title"></span>
+          <button class="btn-ghost btn-sm" id="pdfBackBtn">&#8592; Change file</button>
+        </div>
+        <p class="hint" style="margin:0 0 8px">
+          Review the positions extracted by AI. Edit values or remove rows before importing.
+        </p>
+        <div id="pdfHoldingsTable" style="overflow-x:auto;border:1px solid var(--border);border-radius:6px"></div>
+        <div class="mapping-footer">
+          <div></div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn" id="pdfConfirmBtn">Import</button>
+            <span id="pdfConfirmStatus" class="status-msg"></span>
           </div>
         </div>
       </div>

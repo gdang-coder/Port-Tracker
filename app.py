@@ -8,6 +8,13 @@ from flask import Flask, jsonify, request, render_template
 import db
 import prices
 
+try:
+    import pdfplumber
+    import anthropic
+    _PDF_AVAILABLE = True
+except ImportError:
+    _PDF_AVAILABLE = False
+
 app = Flask(__name__)
 db.init_db()
 
@@ -349,6 +356,125 @@ def upload_confirm():
         )
 
     label = f"{where} import · {len(rows)} holdings"
+    threading.Thread(target=_snapshot_async, args=(label,), daemon=True).start()
+
+    return jsonify({"imported": len(rows), "broker": broker, "account": account})
+
+
+@app.route("/api/upload/parse-pdf", methods=["POST"])
+def upload_parse_pdf():
+    if not _PDF_AVAILABLE:
+        return jsonify({"error": "PDF support not installed (pip install pdfplumber anthropic)"}), 500
+
+    broker = request.form.get("broker", "").strip()
+    account = request.form.get("account", "").strip()
+    if not broker:
+        return jsonify({"error": "Broker name is required"}), 400
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    # Extract text from PDF
+    try:
+        pdf_bytes = file.read()
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            pages_text = [page.extract_text() or "" for page in pdf.pages]
+        text = "\n\n".join(t for t in pages_text if t.strip())
+    except Exception as e:
+        return jsonify({"error": f"Could not read PDF: {e}"}), 400
+
+    if not text.strip():
+        return jsonify({"error": "Could not extract text from PDF. The file may be scanned — try a text-based PDF export from your broker."}), 400
+
+    # Send to Claude
+    try:
+        client = anthropic.Anthropic()
+        msg = client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Extract all stock/ETF/fund holdings from this brokerage statement.\n"
+                    "Return ONLY a valid JSON array. Each element must have:\n"
+                    '  "symbol": ticker symbol string (e.g. "AAPL")\n'
+                    '  "shares": number of shares owned (decimal number)\n'
+                    '  "cost_per_share": average cost per share in USD (decimal number)\n\n'
+                    "Rules:\n"
+                    "- Include only equity positions with valid ticker symbols\n"
+                    "- Skip cash, money market, total rows, options, and bonds\n"
+                    "- If cost is shown as a total, divide by shares to get per-share cost\n"
+                    "- Return ONLY the JSON array, no markdown fences, no explanation\n\n"
+                    f"Statement text:\n{text[:15000]}"
+                ),
+            }],
+        )
+        response_text = msg.content[0].text.strip()
+        # Strip markdown code fences if present
+        response_text = re.sub(r'^```(?:json)?\s*', '', response_text)
+        response_text = re.sub(r'\s*```$', '', response_text)
+        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+        if not json_match:
+            return jsonify({"error": "AI could not identify any holdings in this document."}), 400
+        raw_holdings = json.loads(json_match.group())
+    except Exception as e:
+        return jsonify({"error": f"AI parsing error: {e}"}), 500
+
+    clean = []
+    for h in raw_holdings:
+        sym = str(h.get("symbol") or "").strip().upper()
+        if not _SYMBOL_RE.match(sym):
+            continue
+        try:
+            shares = float(h.get("shares") or 0)
+            cost = float(h.get("cost_per_share") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(shares) and shares > 0 and math.isfinite(cost) and cost > 0):
+            continue
+        clean.append({"symbol": sym, "shares": shares, "cost_per_share": cost})
+
+    if not clean:
+        return jsonify({"error": "No valid holdings found. Ensure the PDF contains position data with symbols and cost basis."}), 400
+
+    return jsonify({"holdings": clean, "count": len(clean)})
+
+
+@app.route("/api/upload/pdf-confirm", methods=["POST"])
+def upload_pdf_confirm():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    broker = (data.get("broker") or "").strip()
+    account = (data.get("account") or "").strip()
+    holdings = data.get("holdings", [])
+
+    if not broker:
+        return jsonify({"error": "Broker name is required"}), 400
+    if not holdings:
+        return jsonify({"error": "No holdings to import"}), 400
+
+    rows = []
+    for h in holdings:
+        sym = str(h.get("symbol") or "").strip().upper()
+        if not _SYMBOL_RE.match(sym):
+            continue
+        try:
+            shares = float(h.get("shares") or 0)
+            cost = float(h.get("cost_per_share") or 0)
+        except (TypeError, ValueError):
+            continue
+        if shares <= 0 or cost <= 0:
+            continue
+        rows.append({"symbol": sym, "shares": shares, "cost_per_share": cost})
+
+    if not rows:
+        return jsonify({"error": "No valid holdings after validation"}), 400
+
+    db.replace_account_holdings(broker, account, rows)
+
+    label = f"{broker}{' · ' + account if account else ''} PDF import · {len(rows)} holdings"
     threading.Thread(target=_snapshot_async, args=(label,), daemon=True).start()
 
     return jsonify({"imported": len(rows), "broker": broker, "account": account})
