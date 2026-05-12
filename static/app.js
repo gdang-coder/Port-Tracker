@@ -20,6 +20,10 @@ let _viewMode = 'detailed';   // 'detailed' | 'combined'
 let _lastHoldings = [];
 let _sort = { key: 'symbol', dir: 'asc' };
 
+// Benchmark
+let _benchmarkPrices = null;  // {YYYY-MM-DD: price}
+let _benchmarkSymbol = 'SPY';
+
 function sortRows(rows, key, dir) {
   const mul = dir === 'desc' ? -1 : 1;
   return [...rows].sort((a, b) => {
@@ -670,6 +674,9 @@ async function loadSnapshots() {
   initPerfRangeIfEmpty();
   renderPerformance();
   renderSnapshotList(filterSnapshotsByRange(_allSnapshots));
+  if (_allSnapshots.length > 0 && _benchmarkPrices === null) {
+    loadBenchmark();
+  }
 }
 
 function snapDateStr(iso) {
@@ -762,6 +769,20 @@ function renderPerformance() {
   renderTimeline(inRange);
 }
 
+function _lookupBenchmarkPrice(isoOrSqlite) {
+  if (!_benchmarkPrices) return null;
+  const base = new Date(isoOrSqlite.slice(0, 10) + 'T00:00:00Z');
+  for (let d = 0; d <= 4; d++) {
+    for (const sign of (d === 0 ? [0] : [-1, 1])) {
+      const dt = new Date(base);
+      dt.setUTCDate(dt.getUTCDate() + sign * d);
+      const key = dt.toISOString().slice(0, 10);
+      if (_benchmarkPrices[key] != null) return _benchmarkPrices[key];
+    }
+  }
+  return null;
+}
+
 function renderTimeline(snapshots) {
   const wrap = document.getElementById('timelineWrap');
   const withValue = snapshots.filter(s => s.total_value != null).reverse();
@@ -772,33 +793,56 @@ function renderTimeline(snapshots) {
   const costData = withValue.map(s => s.total_cost);
   const valueData = withValue.map(s => s.total_value);
 
+  const datasets = [
+    {
+      label: 'Market Value',
+      data: valueData,
+      borderColor: '#6366f1',
+      backgroundColor: 'rgba(99,102,241,0.1)',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+    },
+    {
+      label: 'Cost Basis',
+      data: costData,
+      borderColor: '#8892a4',
+      borderDash: [5, 4],
+      backgroundColor: 'transparent',
+      tension: 0.3,
+      pointRadius: 3,
+    },
+  ];
+
+  // Benchmark: scale so it starts at the same dollar value as the portfolio
+  const benchEnabled = document.getElementById('benchEnabled').checked;
+  if (benchEnabled && _benchmarkPrices) {
+    const startBenchPrice = _lookupBenchmarkPrice(withValue[0].taken_at);
+    if (startBenchPrice) {
+      const startPortValue = withValue[0].total_value;
+      const benchData = withValue.map(s => {
+        const p = _lookupBenchmarkPrice(s.taken_at);
+        return p != null ? Math.round(startPortValue * (p / startBenchPrice) * 100) / 100 : null;
+      });
+      datasets.push({
+        label: `${_benchmarkSymbol} (scaled)`,
+        data: benchData,
+        borderColor: '#f59e0b',
+        borderDash: [4, 3],
+        backgroundColor: 'transparent',
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        spanGaps: true,
+      });
+    }
+  }
+
   if (timelineChart) timelineChart.destroy();
   timelineChart = new Chart(document.getElementById('timelineChart'), {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Market Value',
-          data: valueData,
-          borderColor: '#6366f1',
-          backgroundColor: 'rgba(99,102,241,0.1)',
-          fill: true,
-          tension: 0.3,
-          pointRadius: 4,
-          pointHoverRadius: 6,
-        },
-        {
-          label: 'Cost Basis',
-          data: costData,
-          borderColor: '#8892a4',
-          borderDash: [5, 4],
-          backgroundColor: 'transparent',
-          tension: 0.3,
-          pointRadius: 3,
-        },
-      ],
-    },
+    data: { labels, datasets },
     options: {
       plugins: {
         legend: { labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 12 } } },
@@ -1361,6 +1405,93 @@ document.getElementById('txConfirmBtn').addEventListener('click', async () => {
   document.getElementById('txAccountName').value = '';
   document.getElementById('txCsvFile').value = '';
   loadTransactions();
+});
+
+// ── Benchmark ─────────────────────────────────────────────────────────────
+
+async function loadBenchmark() {
+  const symbol = (document.getElementById('benchSymbol').value.trim() || 'SPY').toUpperCase();
+  const status = document.getElementById('benchStatus');
+  setStatus(status, `Loading ${symbol}…`, '');
+  try {
+    const res = await fetch(`/api/benchmark?symbol=${encodeURIComponent(symbol)}`);
+    const json = await res.json();
+    if (!res.ok) { setStatus(status, json.error || 'Failed', 'err'); return; }
+    _benchmarkSymbol = json.symbol;
+    _benchmarkPrices = json.prices;
+    setStatus(status, `${json.symbol} loaded`, 'ok');
+  } catch (e) {
+    setStatus(status, 'Network error', 'err');
+    return;
+  }
+  renderPerformance();
+}
+
+document.getElementById('benchUpdateBtn').addEventListener('click', () => {
+  _benchmarkPrices = null;  // force re-fetch
+  loadBenchmark();
+});
+
+document.getElementById('benchEnabled').addEventListener('change', () => renderPerformance());
+
+// ── CSV export ─────────────────────────────────────────────────────────────
+
+function downloadCSV(filename, rows) {
+  const csv = rows.map(row =>
+    row.map(cell => {
+      const s = cell == null ? '' : String(cell);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? '"' + s.replace(/"/g, '""') + '"'
+        : s;
+    }).join(',')
+  ).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('exportHoldingsBtn').addEventListener('click', () => {
+  if (!_lastHoldings.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const headers = ['Symbol','Broker','Account','Shares','Avg Cost','Current Price',
+                   'Market Value','Gain/Loss','Return %','Div Yield'];
+  const rows = sortRows(_lastHoldings, _sort.key, _sort.dir).map(h => [
+    h.symbol,
+    h.broker,
+    h.account || '',
+    h.shares,
+    h.cost_per_share,
+    h.current_price ?? '',
+    h.market_value ?? '',
+    h.gain ?? '',
+    h.gain_pct != null ? (h.gain_pct / 100).toFixed(6) : '',
+    h.dividend_yield != null ? h.dividend_yield.toFixed(6) : '',
+  ]);
+  downloadCSV(`holdings-${today}.csv`, [headers, ...rows]);
+});
+
+document.getElementById('exportTxBtn').addEventListener('click', () => {
+  if (!_allTransactions.length) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const headers = ['Date','Broker','Account','Symbol','Action',
+                   'Shares','Price','Amount','Fees','Description'];
+  const rows = _allTransactions.map(t => [
+    t.trade_date,
+    t.broker,
+    t.account || '',
+    t.symbol || '',
+    t.action,
+    t.shares ?? '',
+    t.price ?? '',
+    t.amount ?? '',
+    t.fees || 0,
+    t.description || '',
+  ]);
+  downloadCSV(`transactions-${today}.csv`, [headers, ...rows]);
 });
 
 // ── PDF statement import ───────────────────────────────────────────────────

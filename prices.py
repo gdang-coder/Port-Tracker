@@ -14,6 +14,9 @@ FAIL_TTL = 60      # only cache failures for 1 min so we retry quickly
 _yield_cache: dict[str, tuple[float | None, float]] = {}
 YIELD_TTL = 86400  # 24 h — dividends change rarely
 
+# symbol -> {date_str: price}  (session-scoped; historical data doesn't change)
+_bench_cache: dict[str, dict[str, float]] = {}
+
 
 def _is_stale(sym: str, now: float) -> bool:
     if sym not in _cache:
@@ -88,3 +91,22 @@ def get_dividend_yields(symbols: list[str]) -> dict[str, float | None]:
         _yield_cache[sym] = (val, now)
 
     return {sym: _yield_cache.get(sym, (None, 0))[0] for sym in symbols}
+
+
+def get_benchmark_prices(symbol: str) -> dict[str, float]:
+    """Return {YYYY-MM-DD: close_price} for up to 10 years. Session-cached."""
+    if symbol in _bench_cache:
+        return _bench_cache[symbol]
+    try:
+        data = yf.download(symbol, period="10y", progress=False, auto_adjust=True)
+        if data is None or data.empty:
+            return {}
+        closes = data["Close"]
+        if isinstance(closes, pd.DataFrame):
+            closes = closes.iloc[:, 0]
+        result = {str(idx.date()): float(price)
+                  for idx, price in closes.items() if pd.notna(price)}
+        _bench_cache[symbol] = result
+        return result
+    except Exception:
+        return {}

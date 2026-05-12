@@ -537,6 +537,17 @@ def delete_holding(holding_id):
 
 # --- Snapshot endpoints ---
 
+@app.route("/api/benchmark")
+def benchmark():
+    symbol = request.args.get('symbol', 'SPY').upper().strip()
+    if not _SYMBOL_RE.match(symbol):
+        return jsonify({"error": f"Invalid symbol: {symbol}"}), 400
+    data = prices.get_benchmark_prices(symbol)
+    if not data:
+        return jsonify({"error": f"No price data found for {symbol}"}), 404
+    return jsonify({"symbol": symbol, "prices": data})
+
+
 @app.route("/api/snapshots", methods=["GET"])
 def list_snapshots():
     return jsonify(db.get_snapshots())

@@ -63,6 +63,7 @@
             <button class="toggle-btn active" data-view="detailed">By Account</button>
             <button class="toggle-btn" data-view="combined">Combined</button>
           </div>
+          <button class="btn-ghost btn-sm" id="exportHoldingsBtn">&#8595; Export CSV</button>
           <button class="btn" id="addHoldingBtn">+ Add Holding</button>
         </div>
       </div>
@@ -217,6 +218,15 @@
             <button class="btn-ghost btn-sm" data-preset="all">All</button>
           </div>
         </div>
+        <div class="bench-row">
+          <label class="check-label">
+            <input type="checkbox" id="benchEnabled" checked />
+            Benchmark
+          </label>
+          <input id="benchSymbol" type="text" value="SPY" placeholder="SPY" />
+          <button class="btn-ghost btn-sm" id="benchUpdateBtn">Update</button>
+          <span id="benchStatus" class="status-msg"></span>
+        </div>
       </section>
 
       <!-- Performance summary cards -->
@@ -315,6 +325,7 @@
       <section class="table-section">
         <div class="table-header">
           <h2>Transactions</h2>
+          <button class="btn-ghost btn-sm" id="exportTxBtn">&#8595; Export CSV</button>
         </div>
         <div id="txTableWrap">
           <table id="txTable">
