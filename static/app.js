@@ -43,7 +43,9 @@ function applySort(key) {
   if (_sort.key === key) _sort.dir = _sort.dir === 'asc' ? 'desc' : 'asc';
   else { _sort.key = key; _sort.dir = 'asc'; }
   renderTable(_lastHoldings);
-  renderCharts(_lastHoldings);
+  if (document.getElementById('tabPortfolio').classList.contains('active')) {
+    renderCharts(_lastHoldings);
+  }
 }
 
 document.getElementById('holdingsHead').addEventListener('click', e => {
@@ -360,8 +362,6 @@ document.getElementById('importModePDF').addEventListener('click', () => {
   document.getElementById('previewStatus').textContent = '';
 });
 
-const ROLE_CYCLE = [null, 'symbol', 'shares', 'cost', 'account'];
-const ROLE_LABEL = { symbol: 'Symbol', shares: 'Shares', cost: 'Cost', account: 'Account' };
 
 function renderColumnPicker() {
   const container = document.getElementById('columnPicker');
@@ -919,14 +919,20 @@ function escHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+function _toUTCDate(iso) {
+  return new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+}
+
 function fmtDate(iso) {
-  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  if (!iso) return '—';
+  const d = _toUTCDate(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDateShort(iso) {
   if (!iso) return '—';
-  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+  const d = _toUTCDate(iso);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -1219,10 +1225,15 @@ document.getElementById('txEnd').addEventListener('change', e => {
 });
 document.querySelectorAll('#txPresets .btn-ghost').forEach(btn => {
   btn.addEventListener('click', async () => {
-    // Load all first to know earliest date, then filter
-    const res = await fetch('/api/transactions');
-    const all = await res.json();
-    applyTxPreset(btn.dataset.preset, all);
+    const preset = btn.dataset.preset;
+    if (preset === 'all') {
+      // Need the full unfiltered list to find the earliest date
+      const res = await fetch('/api/transactions');
+      const all = await res.json();
+      applyTxPreset(preset, all);
+    } else {
+      applyTxPreset(preset, _allTransactions);
+    }
     document.querySelectorAll('#txPresets .btn-ghost').forEach(b => b.classList.toggle('active', b === btn));
     loadTransactions();
   });
@@ -1396,21 +1407,6 @@ function renderPdfHoldings() {
       renderPdfHoldings();
     });
   });
-  container.querySelectorAll('.pdf-sym').forEach(inp => {
-    inp.addEventListener('change', () => {
-      _pdfHoldings[parseInt(inp.dataset.i)].symbol = inp.value.trim().toUpperCase();
-    });
-  });
-  container.querySelectorAll('.pdf-shares').forEach(inp => {
-    inp.addEventListener('change', () => {
-      _pdfHoldings[parseInt(inp.dataset.i)].shares = parseFloat(inp.value) || 0;
-    });
-  });
-  container.querySelectorAll('.pdf-cost').forEach(inp => {
-    inp.addEventListener('change', () => {
-      _pdfHoldings[parseInt(inp.dataset.i)].cost_per_share = parseFloat(inp.value) || 0;
-    });
-  });
 }
 
 document.getElementById('parsePdfBtn').addEventListener('click', async () => {
@@ -1464,6 +1460,7 @@ document.getElementById('pdfBackBtn').addEventListener('click', () => {
 
 document.getElementById('pdfConfirmBtn').addEventListener('click', async () => {
   const status = document.getElementById('pdfConfirmStatus');
+  if (!_pdfHoldings.length) { setStatus(status, 'No holdings to import', 'err'); return; }
 
   // Read latest values from the editable inputs before submitting
   document.querySelectorAll('.pdf-sym').forEach(inp => {

@@ -133,7 +133,7 @@ def _clean_rows(rows, broker, default_account=None):
             continue
         if shares <= 0 or cost <= 0:
             continue
-        account = r.get("account", default_account) if default_account is not None or "account" in r else default_account
+        account = r.get("account") if "account" in r else default_account
         if account is None:
             account = ''
         clean.append((sym, shares, cost, broker, account))
@@ -307,13 +307,3 @@ def delete_transactions_by_broker_account(broker, account=None):
             conn.execute("DELETE FROM transactions WHERE broker=?", (broker,))
 
 
-def get_transaction_summary(start_date=None, end_date=None):
-    """Aggregate totals by action type for the given date range."""
-    txs = get_transactions(start_date=start_date, end_date=end_date)
-    totals = {'dividend': 0.0, 'buy': 0.0, 'sell': 0.0, 'reinvest': 0.0, 'fee': 0.0, 'other': 0.0}
-    for t in txs:
-        amt = t.get('amount') or 0.0
-        action = t.get('action', 'other')
-        if action in totals:
-            totals[action] += abs(amt)
-    return totals

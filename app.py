@@ -3,11 +3,13 @@ import re
 import math
 import json
 import threading
+from datetime import datetime
 import pandas as pd
 from flask import Flask, jsonify, request, render_template
 import db
 import prices
 
+_AI_MODEL = "claude-opus-4-7"
 
 app = Flask(__name__)
 db.init_db()
@@ -374,20 +376,27 @@ def upload_parse_pdf():
     # Extract text from PDF
     try:
         pdf_bytes = file.read()
+    except Exception as e:
+        return jsonify({"error": f"Could not read uploaded file: {e}"}), 400
+
+    try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             pages_text = [page.extract_text() or "" for page in pdf.pages]
         text = "\n\n".join(t for t in pages_text if t.strip())
     except Exception as e:
-        return jsonify({"error": f"Could not read PDF: {e}"}), 400
+        return jsonify({"error": f"Could not parse PDF (may be encrypted or image-based): {e}"}), 400
 
     if not text.strip():
-        return jsonify({"error": "Could not extract text from PDF. The file may be scanned — try a text-based PDF export from your broker."}), 400
+        return jsonify({"error": "No text found in PDF. The file may be a scanned image — try a text-based PDF export from your broker."}), 400
+
+    CHAR_LIMIT = 20000
+    truncation_note = f"\n[NOTE: text was truncated to {CHAR_LIMIT} characters — later pages omitted]" if len(text) > CHAR_LIMIT else ""
 
     # Send to Claude
     try:
         client = anthropic.Anthropic()
         msg = client.messages.create(
-            model="claude-opus-4-7",
+            model=_AI_MODEL,
             max_tokens=4096,
             messages=[{
                 "role": "user",
@@ -402,7 +411,7 @@ def upload_parse_pdf():
                     "- Skip cash, money market, total rows, options, and bonds\n"
                     "- If cost is shown as a total, divide by shares to get per-share cost\n"
                     "- Return ONLY the JSON array, no markdown fences, no explanation\n\n"
-                    f"Statement text:\n{text[:15000]}"
+                    f"Statement text:\n{text[:CHAR_LIMIT]}{truncation_note}"
                 ),
             }],
         )
@@ -637,19 +646,14 @@ def _detect_tx_mapping(columns):
     return m
 
 def _parse_date(raw: str) -> str | None:
-    """Try to parse a date string to YYYY-MM-DD."""
     s = str(raw or '').strip()
     if not s or s in ('-', '--', 'n/a'):
         return None
     for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%m/%d/%y', '%d/%m/%Y', '%B %d, %Y', '%b %d, %Y', '%Y%m%d'):
         try:
-            from datetime import datetime
             return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
         except ValueError:
             pass
-    # Fall back: first 10 chars if they look like YYYY-MM-DD
-    if len(s) >= 10 and s[4] == '-' and s[7] == '-':
-        return s[:10]
     return None
 
 def _parse_tx_rows(file_bytes: bytes, mapping: dict, broker: str, account: str) -> list[dict]:
@@ -681,7 +685,7 @@ def _parse_tx_rows(file_bytes: bytes, mapping: dict, broker: str, account: str) 
         if not trade_date:
             continue
 
-        raw_action = str(r.get(action_col) or r.get(desc_col) or '').strip()
+        raw_action = str(r.get(action_col) or '').strip()
         action = _normalize_action(raw_action)
 
         sym_raw = str(r.get(sym_col) or '' if sym_col else '').strip().upper()
@@ -693,8 +697,7 @@ def _parse_tx_rows(file_bytes: bytes, mapping: dict, broker: str, account: str) 
         price_raw = _parse_num(r.get(price_col)) if price_col else None
         price = price_raw if price_raw and price_raw != 0 else None
 
-        amount_raw = _parse_num(r.get(amt_col)) if amt_col else None
-        amount = amount_raw if amt_col else None
+        amount = _parse_num(r.get(amt_col)) if amt_col else None
 
         fees_raw = _parse_num(r.get(fees_col)) if fees_col else None
         fees = fees_raw if fees_raw and fees_raw != 0 else 0.0
@@ -727,13 +730,6 @@ def list_transactions():
     end = request.args.get('end')
     broker = request.args.get('broker')
     return jsonify(db.get_transactions(start_date=start, end_date=end, broker=broker))
-
-
-@app.route("/api/transactions/summary", methods=["GET"])
-def transactions_summary():
-    start = request.args.get('start')
-    end = request.args.get('end')
-    return jsonify(db.get_transaction_summary(start_date=start, end_date=end))
 
 
 @app.route("/api/transactions/<int:tx_id>", methods=["DELETE"])
